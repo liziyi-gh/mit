@@ -6,13 +6,19 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
-import "strconv"
+import (
+	"os"
+	"strconv"
+)
 
 //
 // example to show how to declare the arguments
 // and reply for an RPC.
 //
+
+const MS_IN_NANOSECONDS int = 1000000
+const SEC_IN_NANOSECONDS int = 1000000000
+const HEART_BEAT_DURATION = SEC_IN_NANOSECONDS
 
 type ExampleArgs struct {
 	X int
@@ -23,7 +29,26 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
+const (
+	JOB_MAP = iota
+	JOB_REDUCE
+	JOB_NONE
+)
 
+type Job struct {
+	JOB_ID             int
+	FILENAME           string
+	JOB_TYPE           int
+	FILENAMES          []string
+	REDUCE_PART        int
+	REDUCE_JOBS_NUMBER int
+}
+
+type JobDone struct {
+	JOB_ID   int
+	FILENAME string
+	JOB_TYPE int
+}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
