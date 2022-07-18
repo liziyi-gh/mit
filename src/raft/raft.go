@@ -26,7 +26,6 @@ import (
 	"6.824/labrpc"
 )
 
-
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -50,6 +49,10 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
+type Log struct {
+	index int
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -64,6 +67,25 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
+	// Persistent on all servers
+	current_term int
+	voted_for    int
+	log          []Log
+
+	// Volatile on all servers
+	commit_index int
+	last_applied int
+
+	// Volatile on leaders
+	next_index  []int
+	match_index []int
+
+	// Convinence variables
+	is_leader bool
+
+	// Convinence constants
+	all_server_number int
+	quorum_number     int
 }
 
 // return currentTerm and whether this server
@@ -73,6 +95,12 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	term = rf.current_term
+	isleader = rf.is_leader
+
 	return term, isleader
 }
 
@@ -91,7 +119,6 @@ func (rf *Raft) persist() {
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
 }
-
 
 //
 // restore previously persisted state.
@@ -115,7 +142,6 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
 }
 
-
 //
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
@@ -136,13 +162,16 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 }
 
-
 //
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+	term           int
+	candidate_id   int
+	last_log_index int
+	last_log_term  int
 }
 
 //
@@ -151,6 +180,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+	term         int // currentTerm, for candidate to update itself
+	vote_granted int // true means candidate receive vote
 }
 
 //
@@ -194,7 +225,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -215,7 +245,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
-
 
 	return index, term, isLeader
 }
@@ -239,6 +268,21 @@ func (rf *Raft) Kill() {
 func (rf *Raft) killed() bool {
 	z := atomic.LoadInt32(&rf.dead)
 	return z == 1
+}
+
+func (rf *Raft) requestOneServerVote(index int, args *RequestVoteArgs,
+	reply *RequestVoteReply) {
+	// when not new leader:
+	ok := rf.peers[index].Call("Raft.RequestVote", args, reply)
+}
+
+func (rf *Raft) newVote() {
+	args := make([]RequestVoteArgs, rf.all_server_number)
+	reply := make([]RequestVoteReply, rf.all_server_number)
+	for i := 0; i < rf.all_server_number; i++ {
+		//ok := rf.peers[i].Call("Raft.RequestVote", &args[i], &reply[i])
+		go rf.requestOneServerVote(i, &args[i], &reply[i])
+	}
 }
 
 // The ticker go routine starts a new election if this peer hasn't received
@@ -278,7 +322,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
-
 
 	return rf
 }
