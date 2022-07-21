@@ -51,7 +51,14 @@ type ApplyMsg struct {
 
 type Log struct {
 	index int
+	term  int
 }
+
+const (
+	FOLLOWER = iota
+	CANDIDATE
+	LEADER
+)
 
 //
 // A Go object implementing a single Raft peer.
@@ -81,7 +88,7 @@ type Raft struct {
 	match_index []int
 
 	// Convinence variables
-	is_leader bool
+	status int
 
 	// Convinence constants
 	all_server_number int
@@ -99,7 +106,11 @@ func (rf *Raft) GetState() (int, bool) {
 	defer rf.mu.Unlock()
 
 	term = rf.current_term
-	isleader = rf.is_leader
+	if rf.status == LEADER {
+		isleader = true
+	} else {
+		isleader = false
+	}
 
 	return term, isleader
 }
@@ -168,10 +179,9 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	term           int
-	candidate_id   int
-	last_log_index int
-	last_log_term  int
+	term         int
+	candidate_id int
+	last_log     Log // last log in candidate, if no log, term is -1, also index
 }
 
 //
@@ -180,8 +190,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
-	term         int // currentTerm, for candidate to update itself
-	vote_granted int // true means candidate receive vote
+	term         int  // currentTerm, for candidate to update itself
+	vote_granted bool // true means candidate receive vote
 }
 
 //
@@ -189,6 +199,41 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	reply.vote_granted = false
+
+	// I have newer term
+	if rf.current_term > args.term {
+		return
+	}
+
+	// I have voted for other server
+	if rf.voted_for != -1 && rf.voted_for != args.candidate_id {
+		return
+	}
+
+	// I don't newer log
+	if len(rf.log) > 0 {
+		if rf.log[len(rf.log)-1].term != args.last_log.term {
+			if rf.log[len(rf.log)-1].term > args.last_log.term {
+				return
+			}
+		}
+
+		if rf.log[len(rf.log)-1].term == args.last_log.term {
+			if rf.log[len(rf.log)-1].index > args.last_log.index {
+				return
+			}
+		}
+	}
+
+	// I can voted candidate now
+	// TODO: still other things to do?
+	reply.vote_granted = true
+	rf.voted_for = args.candidate_id
+	rf.current_term = args.term
 }
 
 //
@@ -223,6 +268,55 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
+}
+
+func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply) {
+	// args are the same, so it actually can use only one variable, but I'm lazy
+	args := &RequestVoteArgs{}
+	reply := &RequestVoteReply{}
+	args.term = rf.current_term
+	args.candidate_id = rf.me
+	if len(rf.log) == 0 {
+		args.last_log = Log{}
+		args.last_log.term = -1
+		args.last_log.index = -1
+	} else {
+		args.last_log = rf.log[len(rf.log)-1]
+	}
+
+	for {
+		var ok bool
+		rf.mu.Lock()
+		if rf.status == CANDIDATE {
+			rf.mu.Unlock()
+			ok = rf.sendRequestVote(index, args, reply)
+		} else {
+			rf.mu.Unlock()
+		}
+		if ok {
+			rf.mu.Lock()
+			if rf.status == CANDIDATE {
+				ans <- *reply
+				rf.mu.Unlock()
+			} else {
+				rf.mu.Unlock()
+				return
+			}
+		}
+	}
+}
+
+func (rf *Raft) newVote() {
+	rf.mu.Lock()
+	rf.current_term += 1
+	rf.mu.Unlock()
+
+	reply := make(chan RequestVoteReply, rf.all_server_number)
+	for i := 0; i < rf.all_server_number; i++ {
+		go rf.requestOneServerVote(i, reply)
+	}
+
+	// TODO: handle other server reply
 }
 
 //
@@ -270,22 +364,7 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-func (rf *Raft) requestOneServerVote(index int, args *RequestVoteArgs,
-	reply *RequestVoteReply) {
-	// when not new leader:
-	ok := rf.peers[index].Call("Raft.RequestVote", args, reply)
-}
-
-func (rf *Raft) newVote() {
-	args := make([]RequestVoteArgs, rf.all_server_number)
-	reply := make([]RequestVoteReply, rf.all_server_number)
-	for i := 0; i < rf.all_server_number; i++ {
-		//ok := rf.peers[i].Call("Raft.RequestVote", &args[i], &reply[i])
-		go rf.requestOneServerVote(i, &args[i], &reply[i])
-	}
-}
-
-// The ticker go routine starts a new election if this peer hasn't received
+// The Ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
 	for rf.killed() == false {
