@@ -19,8 +19,10 @@ package raft
 
 import (
 	//	"bytes"
+	"math/rand"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	//	"6.824/labgob"
 	"6.824/labrpc"
@@ -76,6 +78,7 @@ type Raft struct {
 
 	// sync usage
 	status_chan chan (int)
+	receive_from_leader bool
 
 	// Persistent on all servers
 	current_term int
@@ -195,16 +198,25 @@ type RequestVoteReply struct {
 	VOTE_GRANTED bool // true means candidate receive vote
 }
 
-
 type RequestEntryArgs struct {
-
+	TERM           int // leader's term
+	LEADER_ID      int // for follower redirect clients
+	PREV_LOG_INDEX int
+	PREV_LOG_TERM  int
+	ENTRIES        []Log // log entries to store
+	LEADER_COMMIT  int   // leader's commit_index
 }
 
 type RequestEntryReply struct {
+	TERM    int  // receiver's current term
+	SUCCESS bool // true if contain matching prev log
 
 }
 
-
+func (rf *Raft) sendAppendEntry(server int, args *RequestEntryArgs, reply *RequestEntryReply) bool {
+	ok := rf.peers[server].Call("Raft.RequestAppendEntry", args, reply)
+	return ok
+}
 
 func (rf *Raft) RequestAppendEntry(args *RequestEntryArgs, reply *RequestEntryReply) {
 
@@ -298,7 +310,7 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply) {
 	args.CANDIDATE_ID = rf.me
 	if len(rf.log) == 0 {
 		args.LAST_LOG = Log{
-			term: -1,
+			term:  -1,
 			index: -1,
 		}
 	} else {
@@ -434,6 +446,19 @@ func (rf *Raft) ticker() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
+
+		duration := rand.Intn(150) + 300
+
+		time.Sleep(time.Duration(duration) * time.Millisecond)
+
+		rf.mu.Lock()
+		if !rf.receive_from_leader {
+			rf.mu.Unlock()
+			go rf.newVote()
+		} else {
+			rf.receive_from_leader = false
+			rf.mu.Unlock()
+		}
 
 	}
 }
