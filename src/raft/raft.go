@@ -74,6 +74,9 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
+	// sync usage
+	status_chan chan (int)
+
 	// Persistent on all servers
 	current_term int
 	voted_for    int
@@ -86,9 +89,7 @@ type Raft struct {
 	// Volatile on leaders
 	next_index  []int
 	match_index []int
-
-	// Convinence variables
-	status int
+	status      int
 
 	// Convinence constants
 	all_server_number int
@@ -179,9 +180,9 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	term         int
-	candidate_id int
-	last_log     Log // last log in candidate, if no log, term is -1, also index
+	TERM         int
+	CANDIDATE_ID int
+	LAST_LOG     Log // last log in candidate, if no log, term is -1, also index
 }
 
 //
@@ -190,8 +191,23 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
-	term         int  // currentTerm, for candidate to update itself
-	vote_granted bool // true means candidate receive vote
+	TERM         int  // currentTerm, for candidate to update itself
+	VOTE_GRANTED bool // true means candidate receive vote
+}
+
+
+type RequestEntryArgs struct {
+
+}
+
+type RequestEntryReply struct {
+
+}
+
+
+
+func (rf *Raft) RequestAppendEntry(args *RequestEntryArgs, reply *RequestEntryReply) {
+
 }
 
 //
@@ -202,38 +218,40 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	reply.vote_granted = false
+	reply.VOTE_GRANTED = false
 
 	// I have newer term
-	if rf.current_term > args.term {
+	if rf.current_term > args.TERM {
 		return
 	}
 
 	// I have voted for other server
-	if rf.voted_for != -1 && rf.voted_for != args.candidate_id {
+	if rf.voted_for != -1 && rf.voted_for != args.CANDIDATE_ID {
 		return
 	}
 
-	// I don't newer log
+	// I have newer log
 	if len(rf.log) > 0 {
-		if rf.log[len(rf.log)-1].term != args.last_log.term {
-			if rf.log[len(rf.log)-1].term > args.last_log.term {
+		my_latest_log := &rf.log[len(rf.log)-1]
+
+		if my_latest_log.term != args.LAST_LOG.term {
+			if my_latest_log.term > args.LAST_LOG.term {
 				return
 			}
 		}
 
-		if rf.log[len(rf.log)-1].term == args.last_log.term {
-			if rf.log[len(rf.log)-1].index > args.last_log.index {
+		if my_latest_log.term == args.LAST_LOG.term {
+			if my_latest_log.index > args.LAST_LOG.index {
 				return
 			}
 		}
 	}
 
 	// I can voted candidate now
-	// TODO: still other things to do?
-	reply.vote_granted = true
-	rf.voted_for = args.candidate_id
-	rf.current_term = args.term
+	// TODO: is there other things to do?
+	reply.VOTE_GRANTED = true
+	rf.voted_for = args.CANDIDATE_ID
+	rf.current_term = args.TERM
 }
 
 //
@@ -270,38 +288,45 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply) {
+func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply) {
 	// args are the same, so it actually can use only one variable, but I'm lazy
 	args := &RequestVoteArgs{}
 	reply := &RequestVoteReply{}
-	args.term = rf.current_term
-	args.candidate_id = rf.me
+
+	rf.mu.Lock()
+	args.TERM = rf.current_term
+	args.CANDIDATE_ID = rf.me
 	if len(rf.log) == 0 {
-		args.last_log = Log{}
-		args.last_log.term = -1
-		args.last_log.index = -1
+		args.LAST_LOG = Log{
+			term: -1,
+			index: -1,
+		}
 	} else {
-		args.last_log = rf.log[len(rf.log)-1]
+		// NOTE: what is = meaning?
+		// update: it create a copy, nothing to worry about
+		args.LAST_LOG = rf.log[len(rf.log)-1]
 	}
+	rf.mu.Unlock()
 
 	for {
-		var ok bool
+		ok := false
+
 		rf.mu.Lock()
 		if rf.status == CANDIDATE {
 			rf.mu.Unlock()
 			ok = rf.sendRequestVote(index, args, reply)
 		} else {
 			rf.mu.Unlock()
+			return
 		}
+
 		if ok {
 			rf.mu.Lock()
 			if rf.status == CANDIDATE {
-				ans <- *reply
-				rf.mu.Unlock()
-			} else {
-				rf.mu.Unlock()
-				return
+				*ans <- *reply
 			}
+			rf.mu.Unlock()
+			return
 		}
 	}
 }
@@ -311,12 +336,49 @@ func (rf *Raft) newVote() {
 	rf.current_term += 1
 	rf.mu.Unlock()
 
+	got_tickets := 0
 	reply := make(chan RequestVoteReply, rf.all_server_number)
 	for i := 0; i < rf.all_server_number; i++ {
-		go rf.requestOneServerVote(i, reply)
+		// TODO: no need to rpc for local server
+		// NOTE: should very careful about goroutine leak
+		go rf.requestOneServerVote(i, &reply)
 	}
 
-	// TODO: handle other server reply
+	for {
+		rf.mu.Lock()
+		if rf.status == CANDIDATE {
+			rf.mu.Unlock()
+			return
+		}
+		rf.mu.Unlock()
+
+		select {
+		case vote_reply := <-reply:
+			if !vote_reply.VOTE_GRANTED {
+				return
+			}
+
+			got_tickets += 1
+			rf.mu.Lock()
+
+			if got_tickets < rf.quorum_number {
+				rf.mu.Unlock()
+				return
+			}
+
+			rf.status = LEADER
+			rf.mu.Unlock()
+
+			return
+
+		case new_status := <-rf.status_chan:
+			if new_status != CANDIDATE {
+				return
+			}
+		}
+
+	}
+
 }
 
 //
