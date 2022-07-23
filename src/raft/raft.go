@@ -416,7 +416,12 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply) {
 		rf.mu.Lock()
 		if rf.status == CANDIDATE {
 			rf.mu.Unlock()
-			ok = rf.sendRequestVote(index, args, reply)
+			if index == rf.me {
+				rf.RequestVote(args, reply)
+				ok = true
+			} else {
+				ok = rf.sendRequestVote(index, args, reply)
+			}
 		} else {
 			rf.mu.Unlock()
 			return
@@ -445,7 +450,6 @@ func (rf *Raft) newVote() {
 	got_tickets := 0
 	reply := make(chan RequestVoteReply, rf.all_server_number)
 	for i := 0; i < rf.all_server_number; i++ {
-		// TODO: no need to rpc for local server
 		// NOTE: should very careful about goroutine leak
 		go rf.requestOneServerVote(i, &reply)
 	}
