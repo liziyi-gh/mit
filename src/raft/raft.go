@@ -297,6 +297,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	rf.status = FOLLOWER
 	rf.receive_from_leader = true
 	rf.current_term = args.TERM
+	rf.voted_for = -1
 	if prev_status != rf.status {
 		log.Printf("Server[%d] become follower", rf.me)
 	}
@@ -553,9 +554,9 @@ func (rf *Raft) ticker() {
 		time.Sleep(time.Duration(duration) * time.Millisecond)
 
 		rf.mu.Lock()
-		log.Printf("Server[%d] ticker: receive from leader is %t", rf.me, rf.receive_from_leader)
 		if !rf.receive_from_leader && rf.status != LEADER {
 			rf.mu.Unlock()
+			log.Printf("Server[%d] ticker: receive from leader is %t", rf.me, rf.receive_from_leader)
 			// TODO: stop the old newVote go-routine if existed
 			go rf.newVote()
 		} else {
