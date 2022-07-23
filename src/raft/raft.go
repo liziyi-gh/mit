@@ -586,17 +586,6 @@ func (rf *Raft) ticker() {
 	}
 }
 
-func (rf *Raft) mainLoop() {
-	switch rf.status {
-	case FOLLOWER:
-		// stop voting
-	case CANDIDATE:
-		//
-	case LEADER:
-		// send heart beat periodically
-	}
-}
-
 //
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
