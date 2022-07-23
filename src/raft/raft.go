@@ -231,6 +231,10 @@ func (rf *Raft) sendoneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 	for !ok {
 		interval := 10
 		time.Sleep(time.Duration(interval) * time.Millisecond)
+		if rf.current_term > args.TERM {
+			// FIXME: goroutine leak here
+			return
+		}
 		ok = rf.sendAppendEntry(server, args, reply)
 	}
 
@@ -320,13 +324,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// I have newer term
 	if rf.current_term > args.TERM {
-		log.Printf("Server[%d] reject vote request from %d, because term", rf.me, args.CANDIDATE_ID)
+		log.Printf("Server[%d] reject vote request from %d, because its term %d lower than current term %d", rf.me, args.CANDIDATE_ID, args.TERM, rf.current_term)
 		return
 	}
 
 	// I have voted for other server
 	if rf.voted_for != -1 && rf.voted_for != args.CANDIDATE_ID {
-		log.Printf("Server[%d] reject vote request from %d, because have voted other server", rf.me, args.CANDIDATE_ID)
+		log.Printf("Server[%d] reject vote request from %d, because have voted server[%d], at term %d", rf.me, args.CANDIDATE_ID, rf.voted_for, rf.current_term)
 		return
 	}
 
@@ -351,7 +355,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// I can voted candidate now
 	// TODO: is there other things to do?
-	log.Printf("Server[%d] vote for Server[%d]", rf.me, args.CANDIDATE_ID)
+	log.Printf("Server[%d] vote for Server[%d], at term %d", rf.me, args.CANDIDATE_ID, rf.current_term)
 	reply.VOTE_GRANTED = true
 	rf.voted_for = args.CANDIDATE_ID
 	rf.current_term = args.TERM
@@ -415,14 +419,19 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply) {
 		ok := false
 
 		rf.mu.Lock()
+		if rf.current_term != args.TERM {
+			rf.mu.Unlock()
+			log.Printf("Server[%d] quit requestOneServerVote for Server[%d], because new term", rf.me, index)
+			return
+		}
 		if rf.status == CANDIDATE {
 			rf.mu.Unlock()
-			if index == rf.me {
-				rf.RequestVote(args, reply)
-				ok = true
-			} else {
-				ok = rf.sendRequestVote(index, args, reply)
-			}
+			// if index == rf.me {
+			// 	rf.RequestVote(args, reply)
+			// 	ok = true
+			// } else {
+			ok = rf.sendRequestVote(index, args, reply)
+			// }
 		} else {
 			rf.mu.Unlock()
 			return
@@ -445,9 +454,7 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply) {
 
 func (rf *Raft) newVote() {
 	rf.mu.Lock()
-	rf.current_term += 1
-	rf.status = CANDIDATE
-	rf.voted_for = -1
+	this_round_term := rf.current_term
 	rf.mu.Unlock()
 
 	log.Printf("Server[%d] new vote", rf.me)
@@ -472,6 +479,12 @@ func (rf *Raft) newVote() {
 		rf.mu.Lock()
 		if rf.status != CANDIDATE {
 			rf.mu.Unlock()
+			return
+		}
+		// term is new term
+		if this_round_term != rf.current_term {
+			rf.mu.Unlock()
+			log.Printf("Server[%d] quit last vote, because new term", rf.me)
 			return
 		}
 
@@ -548,16 +561,22 @@ func (rf *Raft) ticker() {
 		// be started and to randomize sleeping time using
 		// time.Sleep().
 
-		duration := rand.Intn(300) + 300
+		duration := rand.Intn(300) + 250
 		log.Printf("Server[%d] ticker: wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
 
 		rf.mu.Lock()
 		if !rf.receive_from_leader && rf.status != LEADER {
+			rf.voted_for = -1
+			rf.current_term += 1
+			rf.status = CANDIDATE
 			rf.mu.Unlock()
 			log.Printf("Server[%d] ticker: receive from leader is %t", rf.me, rf.receive_from_leader)
-			// TODO: stop the old newVote go-routine if existed
+
+			// give time to accept other server vote request
+			r := rand.Intn(40)
+			time.Sleep(time.Duration(r) * time.Millisecond)
 			go rf.newVote()
 		} else {
 			rf.receive_from_leader = false
