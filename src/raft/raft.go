@@ -234,13 +234,15 @@ func (rf *Raft) sendoneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		ok = rf.sendAppendEntry(server, args, reply)
 	}
 
+	log.Printf("Server[%d] send heart beat to server[%d]", rf.me, server)
+
 	return
 }
 
 func (rf *Raft) sendOneRoundHeartBeat() {
 	i := 0
 	args := &RequestAppendEntryArgs{}
-	reply := &RequestAppendEntryReply{}
+	reply := make([]RequestAppendEntryReply, rf.all_server_number)
 
 	rf.mu.Lock()
 	if rf.status != LEADER {
@@ -258,8 +260,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		if i == rf.me {
 			continue
 		}
-		go rf.sendoneAppendEntry(i, args, reply)
-		log.Printf("Server[%d] send heart beat to server[%d]", rf.me, i)
+		go rf.sendoneAppendEntry(i, args, &reply[i])
 	}
 }
 
@@ -385,7 +386,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	log.Printf("Server[%d] send vote request to server[%d]", args.CANDIDATE_ID, server)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
@@ -427,14 +427,18 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply) {
 			return
 		}
 
-		if ok {
-			rf.mu.Lock()
-			if rf.status == CANDIDATE {
-				*ans <- *reply
-			}
-			rf.mu.Unlock()
-			return
+		if !ok {
+			continue
 		}
+
+		log.Printf("Server[%d] send vote request to server[%d]", rf.me, index)
+		rf.mu.Lock()
+		if rf.status == CANDIDATE {
+			*ans <- *reply
+		}
+		rf.mu.Unlock()
+		return
+
 	}
 }
 
@@ -552,6 +556,7 @@ func (rf *Raft) ticker() {
 		log.Printf("Server[%d] ticker: receive from leader is %t", rf.me, rf.receive_from_leader)
 		if !rf.receive_from_leader && rf.status != LEADER {
 			rf.mu.Unlock()
+			// TODO: stop the old newVote go-routine if existed
 			go rf.newVote()
 		} else {
 			rf.receive_from_leader = false
