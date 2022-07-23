@@ -61,6 +61,7 @@ type Log struct {
 
 const (
 	FOLLOWER = iota
+	PRECANDIDATE
 	CANDIDATE
 	LEADER
 )
@@ -187,7 +188,7 @@ type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
 	TERM         int
 	CANDIDATE_ID int
-	LAST_LOG     Log // last log in candidate, if no log, term is -1, also index
+	PREV_LOG     Log // last log in candidate, if no log, term is -1, also index
 }
 
 //
@@ -201,18 +202,34 @@ type RequestVoteReply struct {
 }
 
 type RequestAppendEntryArgs struct {
-	TERM           int // leader's term
-	LEADER_ID      int // for follower redirect clients
-	PREV_LOG_INDEX int
-	PREV_LOG_TERM  int
-	ENTRIES        []Log // log entries to store
-	LEADER_COMMIT  int   // leader's commit_index
+	TERM          int // leader's term
+	LEADER_ID     int // for follower redirect clients
+	PREV_LOG      Log
+	ENTRIES       []Log // log entries to store
+	LEADER_COMMIT int   // leader's commit_index
 }
 
 type RequestAppendEntryReply struct {
 	TERM    int  // receiver's current term
 	SUCCESS bool // true if contain matching prev log
 
+}
+
+type RequestPreVoteArgs struct {
+	NEXT_TERM    int // sender server next term
+	CANDIDATE_ID int // self id
+	PREV_LOG     Log // last log
+
+}
+
+type RequestPreVoteReply struct {
+	TERM    int  // receiver's current term
+	SUCCESS bool // true means caller would receive vote if it was a candidate
+}
+
+func (rf *Raft) sendPreVote(server int, args *RequestPreVoteArgs, reply *RequestPreVoteReply) bool {
+	ok := rf.peers[server].Call("Raft.RequestPreVote", args, reply)
+	return ok
 }
 
 func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
@@ -254,7 +271,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 	rf.mu.Unlock()
 
 	for i = 0; i < rf.all_server_number; i++ {
-		// TODO: reply will cause data race, fix it later
+		// don't send heart beat to myself
 		if i == rf.me {
 			continue
 		}
@@ -263,7 +280,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 }
 
 func (rf *Raft) sendHeartBeat() {
-	interval := 100
+	interval := 100 // ms
 	for {
 		time.Sleep(time.Duration(interval) * time.Millisecond)
 		rf.mu.Lock()
@@ -276,6 +293,27 @@ func (rf *Raft) sendHeartBeat() {
 
 		rf.sendOneRoundHeartBeat()
 	}
+}
+
+func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	reply.TERM = rf.current_term
+	reply.SUCCESS = false
+
+	// caller term less than us
+	if args.NEXT_TERM < rf.current_term {
+		return
+	}
+
+	// last AppendEntries call was received less than election timeout ago
+	if rf.receive_from_leader {
+		return
+	}
+
+	reply.SUCCESS = true
+	return
 }
 
 func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
@@ -332,15 +370,15 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if len(rf.log) > 0 {
 		my_latest_log := &rf.log[len(rf.log)-1]
 
-		if my_latest_log.TERM != args.LAST_LOG.TERM {
-			if my_latest_log.TERM > args.LAST_LOG.TERM {
+		if my_latest_log.TERM != args.PREV_LOG.TERM {
+			if my_latest_log.TERM > args.PREV_LOG.TERM {
 				log.Printf("Server[%d] reject vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
 				return
 			}
 		}
 
-		if my_latest_log.TERM == args.LAST_LOG.TERM {
-			if my_latest_log.INDEX > args.LAST_LOG.INDEX {
+		if my_latest_log.TERM == args.PREV_LOG.TERM {
+			if my_latest_log.INDEX > args.PREV_LOG.INDEX {
 				log.Printf("Server[%d] reject vote request from %d, because have newer log, 2", rf.me, args.CANDIDATE_ID)
 				return
 			}
@@ -398,14 +436,14 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply) {
 	args.TERM = rf.current_term
 	args.CANDIDATE_ID = rf.me
 	if len(rf.log) == 0 {
-		args.LAST_LOG = Log{
+		args.PREV_LOG = Log{
 			TERM:  -1,
 			INDEX: -1,
 		}
 	} else {
 		// NOTE: what is = meaning?
 		// update: it create a copy, nothing to worry about
-		args.LAST_LOG = rf.log[len(rf.log)-1]
+		args.PREV_LOG = rf.log[len(rf.log)-1]
 	}
 	rf.mu.Unlock()
 
@@ -497,6 +535,111 @@ func (rf *Raft) newVote() {
 
 }
 
+func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestPreVoteReply) {
+	args := &RequestPreVoteArgs{}
+	reply := &RequestPreVoteReply{}
+
+	rf.mu.Lock()
+	this_round_term := rf.current_term
+	args.NEXT_TERM = rf.current_term + 1
+	args.CANDIDATE_ID = rf.me
+
+	if len(rf.log) == 0 {
+		args.PREV_LOG = Log{
+			TERM:  -1,
+			INDEX: -1,
+		}
+	} else {
+		args.PREV_LOG = rf.log[len(rf.log)-1]
+	}
+	rf.mu.Unlock()
+
+	for {
+		ok := false
+
+		rf.mu.Lock()
+		if rf.current_term != this_round_term {
+			rf.mu.Unlock()
+			log.Printf("Server[%d] quit requestOneServerPreVote for Server[%d], because new term", rf.me, index)
+			return
+		}
+
+		if rf.status == PRECANDIDATE {
+			rf.mu.Unlock()
+			ok = rf.sendPreVote(index, args, reply)
+		}
+
+		if !ok {
+			continue
+		}
+
+		log.Printf("Server[%d] send pre vote request to server[%d]", rf.me, index)
+		rf.mu.Lock()
+		if rf.status == PRECANDIDATE {
+			*ans <- *reply
+		}
+		rf.mu.Unlock()
+		return
+
+	}
+}
+
+func (rf *Raft) askPreVote() bool {
+	rf.mu.Lock()
+	this_round_term := rf.current_term
+	rf.mu.Unlock()
+
+	log.Printf("Server[%d] pre vote", rf.me)
+	got_tickets := 0
+	got_reply := 0
+	reply := make(chan RequestPreVoteReply, rf.all_server_number)
+	for i := 0; i < rf.all_server_number; i++ {
+		// NOTE: should very careful about goroutine leak
+		go rf.requestOneServerPreVote(i, &reply)
+	}
+
+	for {
+		pre_vote_reply := <-reply
+		got_reply += 1
+		log.Printf("Server[%d] got vote reply, granted is %t", rf.me, pre_vote_reply.SUCCESS)
+		if !pre_vote_reply.SUCCESS {
+			continue
+		}
+
+		got_tickets += 1
+
+		// current status is not pre candidate anymore
+
+		rf.mu.Lock()
+		if rf.status != PRECANDIDATE {
+			rf.mu.Unlock()
+			return false
+		}
+
+		// term is new term
+		if rf.current_term != this_round_term {
+			rf.mu.Unlock()
+			return false
+		}
+
+		// tickets not enough
+		if got_tickets < rf.quorum_number {
+			rf.mu.Unlock()
+			continue
+		} else {
+			// tickets enough
+			rf.mu.Unlock()
+
+			log.Printf("Server[%d] win the vote", rf.me)
+			return true
+		}
+
+		if got_reply == rf.all_server_number {
+			return false
+		}
+	}
+}
+
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -551,22 +694,38 @@ func (rf *Raft) ticker() {
 		// be started and to randomize sleeping time using
 		// time.Sleep().
 
-		duration := rand.Intn(300) + 200
+		duration := rand.Intn(100) + 300
 		log.Printf("Server[%d] ticker: wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
 
 		rf.mu.Lock()
 		if !rf.receive_from_leader && rf.status != LEADER {
+			// TODO: I think I have to implement pre vote RPC
+			rf.status = PRECANDIDATE
+			rf.mu.Unlock()
+
+			ok := rf.askPreVote()
+
+			if !ok {
+				log.Printf("Server[%d] pre vote failed", rf.me)
+				continue
+			}
+
+			rf.mu.Lock()
 			rf.voted_for = -1
 			rf.current_term += 1
 			rf.status = CANDIDATE
 			rf.mu.Unlock()
 			log.Printf("Server[%d] ticker: receive from leader is %t", rf.me, rf.receive_from_leader)
 
+			// NOTE: this is intresting thing paper did not mention, I wonder is
+			// this right thing to do?
 			// give time to accept other server vote request
-			r := rand.Intn(100)
+			r := rand.Intn(50)
 			time.Sleep(time.Duration(r) * time.Millisecond)
+
+			// start new vote
 			go rf.newVote()
 		} else {
 			rf.receive_from_leader = false
