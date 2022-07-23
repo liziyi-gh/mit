@@ -242,10 +242,12 @@ func (rf *Raft) sendoneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 	for !ok {
 		interval := 10
 		time.Sleep(time.Duration(interval) * time.Millisecond)
+		rf.mu.Lock()
 		if rf.current_term > args.TERM {
-			// FIXME: goroutine leak here
+			rf.mu.Unlock()
 			return
 		}
+		rf.mu.Unlock()
 		ok = rf.sendAppendEntry(server, args, reply)
 	}
 
@@ -301,16 +303,21 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 
 	reply.TERM = rf.current_term
 	reply.SUCCESS = false
+	log.Printf("Server[%d] got pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
 	// caller term less than us
 	if args.NEXT_TERM < rf.current_term {
+		log.Printf("Server[%d] reject pre vote request from Server[%d], term too low", rf.me, args.CANDIDATE_ID)
 		return
 	}
 
 	// last AppendEntries call was received less than election timeout ago
 	if rf.receive_from_leader {
+		log.Printf("Server[%d] reject pre vote request from Server[%d], log too old", rf.me, args.CANDIDATE_ID)
 		return
 	}
+
+	log.Printf("Server[%d] granted pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
 	reply.SUCCESS = true
 	return
@@ -480,9 +487,12 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply) {
 	}
 }
 
-func (rf *Raft) newVote() {
+func (rf *Raft) newVote(this_round_term int) {
 	rf.mu.Lock()
-	this_round_term := rf.current_term
+	if this_round_term != rf.current_term {
+		rf.mu.Unlock()
+		return
+	}
 	rf.mu.Unlock()
 
 	log.Printf("Server[%d] new vote", rf.me)
@@ -584,9 +594,12 @@ func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestPreVoteReply
 	}
 }
 
-func (rf *Raft) askPreVote() bool {
+func (rf *Raft) askPreVote(this_round_term int) bool {
 	rf.mu.Lock()
-	this_round_term := rf.current_term
+	if this_round_term != rf.current_term {
+		rf.mu.Unlock()
+		return false
+	}
 	rf.mu.Unlock()
 
 	log.Printf("Server[%d] pre vote", rf.me)
@@ -601,7 +614,7 @@ func (rf *Raft) askPreVote() bool {
 	for {
 		pre_vote_reply := <-reply
 		got_reply += 1
-		log.Printf("Server[%d] got vote reply, granted is %t", rf.me, pre_vote_reply.SUCCESS)
+		log.Printf("Server[%d] got pre vote reply, granted is %t", rf.me, pre_vote_reply.SUCCESS)
 		if !pre_vote_reply.SUCCESS {
 			continue
 		}
@@ -613,29 +626,31 @@ func (rf *Raft) askPreVote() bool {
 		rf.mu.Lock()
 		if rf.status != PRECANDIDATE {
 			rf.mu.Unlock()
+			log.Printf("Server[%d] quit pre vote, not PRECANDIDATE anymore", rf.me)
 			return false
 		}
 
 		// term is new term
 		if rf.current_term != this_round_term {
 			rf.mu.Unlock()
+			log.Printf("Server[%d] quit pre vote, not this term anymore", rf.me)
 			return false
 		}
 
 		// tickets not enough
 		if got_tickets < rf.quorum_number {
 			rf.mu.Unlock()
+			if got_reply == rf.all_server_number {
+				log.Printf("Server[%d] lost the pre vote", rf.me)
+				return false
+			}
 			continue
 		} else {
 			// tickets enough
 			rf.mu.Unlock()
 
-			log.Printf("Server[%d] win the vote", rf.me)
+			log.Printf("Server[%d] win the pre vote", rf.me)
 			return true
-		}
-
-		if got_reply == rf.all_server_number {
-			return false
 		}
 	}
 }
@@ -702,13 +717,13 @@ func (rf *Raft) ticker() {
 		rf.mu.Lock()
 		if !rf.receive_from_leader && rf.status != LEADER {
 			// TODO: I think I have to implement pre vote RPC
+			this_round_term := rf.current_term
 			rf.status = PRECANDIDATE
 			rf.mu.Unlock()
 
-			ok := rf.askPreVote()
+			ok := rf.askPreVote(this_round_term)
 
 			if !ok {
-				log.Printf("Server[%d] pre vote failed", rf.me)
 				continue
 			}
 
@@ -716,6 +731,7 @@ func (rf *Raft) ticker() {
 			rf.voted_for = -1
 			rf.current_term += 1
 			rf.status = CANDIDATE
+			this_round_term = rf.current_term
 			rf.mu.Unlock()
 			log.Printf("Server[%d] ticker: receive from leader is %t", rf.me, rf.receive_from_leader)
 
@@ -726,7 +742,7 @@ func (rf *Raft) ticker() {
 			time.Sleep(time.Duration(r) * time.Millisecond)
 
 			// start new vote
-			go rf.newVote()
+			go rf.newVote(this_round_term)
 		} else {
 			rf.receive_from_leader = false
 			rf.mu.Unlock()
