@@ -215,12 +215,6 @@ type RequestAppendEntryReply struct {
 
 }
 
-// func (rf *Raft) logInfo(str string, args ...interface{}) {
-// 	tmp := "Server[%d]"
-// 	fstr := strings.Join(tmp, str)
-// 	log.Printf(fstr, rf.me, args...)
-// }
-
 func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestAppendEntry", args, reply)
 	return ok
