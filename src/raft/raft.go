@@ -426,12 +426,8 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply) {
 		}
 		if rf.status == CANDIDATE {
 			rf.mu.Unlock()
-			// if index == rf.me {
-			// 	rf.RequestVote(args, reply)
-			// 	ok = true
-			// } else {
+			// send rpc to server itself, otherwise may split tickets
 			ok = rf.sendRequestVote(index, args, reply)
-			// }
 		} else {
 			rf.mu.Unlock()
 			return
@@ -561,7 +557,7 @@ func (rf *Raft) ticker() {
 		// be started and to randomize sleeping time using
 		// time.Sleep().
 
-		duration := rand.Intn(300) + 250
+		duration := rand.Intn(300) + 200
 		log.Printf("Server[%d] ticker: wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
@@ -575,7 +571,7 @@ func (rf *Raft) ticker() {
 			log.Printf("Server[%d] ticker: receive from leader is %t", rf.me, rf.receive_from_leader)
 
 			// give time to accept other server vote request
-			r := rand.Intn(40)
+			r := rand.Intn(100)
 			time.Sleep(time.Duration(r) * time.Millisecond)
 			go rf.newVote()
 		} else {
