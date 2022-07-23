@@ -226,31 +226,79 @@ func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply 
 	return ok
 }
 
-func (rf *Raft) sendHeartBeat() {
+func (rf *Raft) sendoneAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
+	ok := rf.sendAppendEntry(server, args, reply)
+	for !ok {
+		interval := 10
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+		ok = rf.sendAppendEntry(server, args, reply)
+	}
+
+	return
+}
+
+func (rf *Raft) sendOneRoundHeartBeat() {
 	i := 0
 	args := &RequestAppendEntryArgs{}
 	reply := &RequestAppendEntryReply{}
+
+	rf.mu.Lock()
+	if rf.status != LEADER {
+		rf.mu.Unlock()
+		return
+	}
+	log.Printf("Server[%d] start new round beat", rf.me)
 	args.TERM = rf.current_term
 	args.LEADER_ID = rf.me
 	args.LEADER_COMMIT = rf.commit_index
+	rf.mu.Unlock()
+
 	for i = 0; i < rf.all_server_number; i++ {
 		// TODO: reply will cause data race, fix it later
-		go rf.sendAppendEntry(i, args, reply)
+		if i == rf.me {
+			continue
+		}
+		go rf.sendoneAppendEntry(i, args, reply)
+		log.Printf("Server[%d] send heart beat to server[%d]", rf.me, i)
+	}
+}
+
+func (rf *Raft) sendHeartBeat() {
+	interval := 100
+	for {
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+		rf.mu.Lock()
+		if rf.status != LEADER {
+			log.Printf("Server[%d] quit send heart beat, no longer leader", rf.me)
+			rf.mu.Unlock()
+			return
+		}
+		rf.mu.Unlock()
+
+		rf.sendOneRoundHeartBeat()
 	}
 }
 
 func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	log.Printf("Server[%d] receive heart beat from server[%d]", rf.me, args.LEADER_ID)
 
 	if args.TERM < rf.current_term {
+		log.Printf("Server[%d] reject heart beat from server[%d]", rf.me, args.LEADER_ID)
 		reply.SUCCESS = false
 		return
 	}
+	log.Printf("Server[%d] accept heart beat from server[%d]", rf.me, args.LEADER_ID)
 
-	rf.current_term = args.TERM
+	prev_status := rf.status
+
 	rf.status = FOLLOWER
 	rf.receive_from_leader = true
+	rf.current_term = args.TERM
+	if prev_status != rf.status {
+		log.Printf("Server[%d] become follower", rf.me)
+	}
 
 	// TODO: other thing to append entries
 
@@ -301,7 +349,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// I can voted candidate now
 	// TODO: is there other things to do?
-	log.Printf("Server[%d] vote for %d", rf.me, args.CANDIDATE_ID)
+	log.Printf("Server[%d] vote for Server[%d]", rf.me, args.CANDIDATE_ID)
 	reply.VOTE_GRANTED = true
 	rf.voted_for = args.CANDIDATE_ID
 	rf.current_term = args.TERM
@@ -337,6 +385,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	log.Printf("Server[%d] send vote request to server[%d]", args.CANDIDATE_ID, server)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
@@ -424,8 +473,12 @@ func (rf *Raft) newVote() {
 		} else {
 			// tickets enough
 			rf.status = LEADER
-			log.Printf("Server[%d] win the vote", rf.me)
 			rf.mu.Unlock()
+
+			log.Printf("Server[%d] win the vote", rf.me)
+			rf.sendOneRoundHeartBeat()
+			go rf.sendHeartBeat()
+
 			return
 		}
 	}
@@ -486,12 +539,14 @@ func (rf *Raft) ticker() {
 		// be started and to randomize sleeping time using
 		// time.Sleep().
 
-		duration := rand.Intn(150) + 150
+		duration := rand.Intn(300) + 300
+		log.Printf("Server[%d] ticker: wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
 
 		rf.mu.Lock()
-		if !rf.receive_from_leader {
+		log.Printf("Server[%d] ticker: receive from leader is %t", rf.me, rf.receive_from_leader)
+		if !rf.receive_from_leader && rf.status != LEADER {
 			rf.mu.Unlock()
 			go rf.newVote()
 		} else {
@@ -538,6 +593,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	}
 
 	log.SetOutput(file)
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
 	rf.voted_for = -1
 	rf.status = FOLLOWER
