@@ -276,7 +276,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 
 	for i = 0; i < rf.all_server_number; i++ {
 		// don't send heart beat to myself
-		if i == rf.me {
+		if i == args.LEADER_ID {
 			continue
 		}
 		go rf.sendoneAppendEntry(i, args, &reply[i])
@@ -289,8 +289,8 @@ func (rf *Raft) sendHeartBeat() {
 		time.Sleep(time.Duration(interval) * time.Millisecond)
 		rf.mu.Lock()
 		if rf.status != LEADER {
-			log.Printf("Server[%d] quit send heart beat, no longer leader", rf.me)
 			rf.mu.Unlock()
+			log.Printf("Server[%d] quit send heart beat, no longer leader", rf.me)
 			return
 		}
 		rf.mu.Unlock()
@@ -307,6 +307,15 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 	reply.SUCCESS = false
 	log.Printf("Server[%d] got pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
+	// FIXME: begin: I am not sure this part is right
+
+	if rf.voted_for != -1 && rf.voted_for != args.CANDIDATE_ID {
+		log.Printf("Server[%d] reject pre vote request from %d, because have voted server[%d], at term %d", rf.me, args.CANDIDATE_ID, rf.voted_for, rf.current_term)
+		return
+	}
+
+	// FIXME: end: I am not sure this part is right
+
 	// caller term less than us
 	if args.NEXT_TERM < rf.current_term {
 		log.Printf("Server[%d] reject pre vote request from Server[%d], term too low", rf.me, args.CANDIDATE_ID)
@@ -315,7 +324,7 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 
 	// last AppendEntries call was received less than election timeout ago
 	if rf.receive_from_leader {
-		log.Printf("Server[%d] reject pre vote request from Server[%d], log too old", rf.me, args.CANDIDATE_ID)
+		log.Printf("Server[%d] reject pre vote request from Server[%d], already have leader", rf.me, args.CANDIDATE_ID)
 		return
 	}
 
@@ -328,14 +337,18 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("Server[%d] receive heart beat from server[%d]", rf.me, args.LEADER_ID)
+	if rf.status != FOLLOWER {
+		log.Printf("Server[%d] receive heart beat from server[%d]", rf.me, args.LEADER_ID)
+	}
 
 	if args.TERM < rf.current_term {
 		log.Printf("Server[%d] reject heart beat from server[%d]", rf.me, args.LEADER_ID)
 		reply.SUCCESS = false
 		return
 	}
-	log.Printf("Server[%d] accept heart beat from server[%d]", rf.me, args.LEADER_ID)
+	if rf.status != FOLLOWER {
+		log.Printf("Server[%d] accept heart beat from server[%d]", rf.me, args.LEADER_ID)
+	}
 
 	prev_status := rf.status
 
@@ -395,7 +408,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// I can voted candidate now
-	// TODO: is there other things to do?
 	log.Printf("Server[%d] vote for Server[%d], at term %d", rf.me, args.CANDIDATE_ID, rf.current_term)
 	reply.VOTE_GRANTED = true
 	rf.voted_for = args.CANDIDATE_ID
@@ -523,7 +535,7 @@ func (rf *Raft) newVote(this_round_term int) {
 		// term is new term
 		if this_round_term != rf.current_term {
 			rf.mu.Unlock()
-			log.Printf("Server[%d] quit last vote, because new term", rf.me)
+			log.Printf("Server[%d] quit last vote, because term %d is old", rf.me, this_round_term)
 			return
 		}
 
@@ -536,7 +548,7 @@ func (rf *Raft) newVote(this_round_term int) {
 			rf.status = LEADER
 			rf.mu.Unlock()
 
-			log.Printf("Server[%d] win the vote", rf.me)
+			log.Printf("Server[%d] become LEADER", rf.me)
 			rf.sendOneRoundHeartBeat()
 			go rf.sendHeartBeat()
 
@@ -646,6 +658,7 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 		if got_tickets < rf.quorum_number {
 			if got_reply == rf.all_server_number {
 				rf.status = FOLLOWER
+				rf.mu.Unlock()
 				log.Printf("Server[%d] lost the pre vote", rf.me)
 				return false
 			}
@@ -727,7 +740,7 @@ func (rf *Raft) ticker() {
 		// be started and to randomize sleeping time using
 		// time.Sleep().
 
-		duration := rand.Intn(100) + 300
+		duration := rand.Intn(150) + 250
 		log.Printf("Server[%d] ticker: wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
