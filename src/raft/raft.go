@@ -251,7 +251,7 @@ func (rf *Raft) sendoneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		ok = rf.sendAppendEntry(server, args, reply)
 	}
 
-	log.Printf("Server[%d] send heart beat to server[%d]", rf.me, server)
+	// log.Printf("Server[%d] send heart beat to server[%d]", rf.me, server)
 
 	return
 }
@@ -266,7 +266,9 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		rf.mu.Unlock()
 		return
 	}
-	log.Printf("Server[%d] start new round beat", rf.me)
+	if i%3 == 0 {
+		log.Printf("Server[%d] start new round beat", rf.me)
+	}
 	args.TERM = rf.current_term
 	args.LEADER_ID = rf.me
 	args.LEADER_COMMIT = rf.commit_index
@@ -463,14 +465,13 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply) {
 			log.Printf("Server[%d] quit requestOneServerVote for Server[%d], because new term", rf.me, index)
 			return
 		}
-		if rf.status == CANDIDATE {
+		if rf.status != CANDIDATE {
 			rf.mu.Unlock()
-			// send rpc to server itself, otherwise may split tickets
-			ok = rf.sendRequestVote(index, args, reply)
-		} else {
-			rf.mu.Unlock()
+			log.Printf("Server[%d] quit requestOneServerVote for Server[%d], because is not CANDIDATE", rf.me, index)
 			return
 		}
+		rf.mu.Unlock()
+		ok = rf.sendRequestVote(index, args, reply)
 
 		if !ok {
 			continue
@@ -574,10 +575,13 @@ func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestPreVoteReply
 			return
 		}
 
-		if rf.status == PRECANDIDATE {
+		if rf.status != PRECANDIDATE {
 			rf.mu.Unlock()
-			ok = rf.sendPreVote(index, args, reply)
+			log.Printf("Server[%d] quit requestOneServerPreVote for Server[%d], because is not PRECANDIDATE", rf.me, index)
+			return
 		}
+		rf.mu.Unlock()
+		ok = rf.sendPreVote(index, args, reply)
 
 		if !ok {
 			continue
@@ -602,12 +606,11 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 	}
 	rf.mu.Unlock()
 
-	log.Printf("Server[%d] pre vote", rf.me)
+	log.Printf("Server[%d] start new pre vote", rf.me)
 	got_tickets := 0
 	got_reply := 0
 	reply := make(chan RequestPreVoteReply, rf.all_server_number)
 	for i := 0; i < rf.all_server_number; i++ {
-		// NOTE: should very careful about goroutine leak
 		go rf.requestOneServerPreVote(i, &reply)
 	}
 
@@ -625,6 +628,7 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 
 		rf.mu.Lock()
 		if rf.status != PRECANDIDATE {
+			rf.status = FOLLOWER
 			rf.mu.Unlock()
 			log.Printf("Server[%d] quit pre vote, not PRECANDIDATE anymore", rf.me)
 			return false
@@ -632,6 +636,7 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 
 		// term is new term
 		if rf.current_term != this_round_term {
+			rf.status = FOLLOWER
 			rf.mu.Unlock()
 			log.Printf("Server[%d] quit pre vote, not this term anymore", rf.me)
 			return false
@@ -639,17 +644,21 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 
 		// tickets not enough
 		if got_tickets < rf.quorum_number {
-			rf.mu.Unlock()
 			if got_reply == rf.all_server_number {
+				rf.status = FOLLOWER
 				log.Printf("Server[%d] lost the pre vote", rf.me)
 				return false
 			}
+			rf.mu.Unlock()
 			continue
 		} else {
 			// tickets enough
 			rf.mu.Unlock()
+			rf.becomeCandidate()
 
 			log.Printf("Server[%d] win the pre vote", rf.me)
+			this_round_term, _ = rf.GetState()
+			go rf.newVote(this_round_term)
 			return true
 		}
 	}
@@ -700,6 +709,15 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
+func (rf *Raft) becomeCandidate() {
+	rf.mu.Lock()
+	rf.voted_for = -1
+	rf.current_term += 1
+	rf.status = CANDIDATE
+	rf.mu.Unlock()
+	log.Printf("Server[%d] become candidate", rf.me)
+}
+
 // The Ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
@@ -715,38 +733,40 @@ func (rf *Raft) ticker() {
 		time.Sleep(time.Duration(duration) * time.Millisecond)
 
 		rf.mu.Lock()
-		if !rf.receive_from_leader && rf.status != LEADER {
-			// TODO: I think I have to implement pre vote RPC
-			this_round_term := rf.current_term
-			rf.status = PRECANDIDATE
-			rf.mu.Unlock()
-
-			ok := rf.askPreVote(this_round_term)
-
-			if !ok {
-				continue
-			}
-
-			rf.mu.Lock()
-			rf.voted_for = -1
-			rf.current_term += 1
-			rf.status = CANDIDATE
-			this_round_term = rf.current_term
-			rf.mu.Unlock()
-			log.Printf("Server[%d] ticker: receive from leader is %t", rf.me, rf.receive_from_leader)
-
-			// NOTE: this is intresting thing paper did not mention, I wonder is
-			// this right thing to do?
-			// give time to accept other server vote request
-			r := rand.Intn(50)
-			time.Sleep(time.Duration(r) * time.Millisecond)
-
-			// start new vote
-			go rf.newVote(this_round_term)
-		} else {
+		if rf.receive_from_leader || rf.status == LEADER {
 			rf.receive_from_leader = false
 			rf.mu.Unlock()
+			continue
 		}
+
+		if rf.status == FOLLOWER {
+			this_round_term := rf.current_term
+			rf.status = PRECANDIDATE
+
+			// start new vote
+			go rf.askPreVote(this_round_term)
+			rf.mu.Unlock()
+			continue
+		}
+
+		if rf.status == PRECANDIDATE {
+			rf.status = FOLLOWER
+			rf.mu.Unlock()
+
+			log.Printf("Server[%d] did not finish pre vote in time, become follower", rf.me)
+			continue
+		}
+
+		if rf.status == CANDIDATE {
+			rf.status = FOLLOWER
+			rf.mu.Unlock()
+
+			log.Printf("Server[%d] did not finish vote in time, become follower", rf.me)
+			continue
+		}
+
+		// code unreachable
+		rf.mu.Unlock()
 
 	}
 }
