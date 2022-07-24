@@ -448,13 +448,13 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply) {
+func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this_round_term int) {
 	// args are the same, so it actually can use only one variable, but I'm lazy
 	args := &RequestVoteArgs{}
 	reply := &RequestVoteReply{}
 
 	rf.mu.Lock()
-	args.TERM = rf.current_term
+	args.TERM = this_round_term
 	args.CANDIDATE_ID = rf.me
 	if len(rf.log) == 0 {
 		args.PREV_LOG = Log{
@@ -514,7 +514,7 @@ func (rf *Raft) newVote(this_round_term int) {
 	reply := make(chan RequestVoteReply, rf.all_server_number)
 	for i := 0; i < rf.all_server_number; i++ {
 		// NOTE: should very careful about goroutine leak
-		go rf.requestOneServerVote(i, &reply)
+		go rf.requestOneServerVote(i, &reply, this_round_term)
 	}
 
 	for {
@@ -558,13 +558,12 @@ func (rf *Raft) newVote(this_round_term int) {
 
 }
 
-func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestPreVoteReply) {
+func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestPreVoteReply, this_round_term int) {
 	args := &RequestPreVoteArgs{}
 	reply := &RequestPreVoteReply{}
 
 	rf.mu.Lock()
-	this_round_term := rf.current_term
-	args.NEXT_TERM = rf.current_term + 1
+	args.NEXT_TERM = this_round_term + 1
 	args.CANDIDATE_ID = rf.me
 
 	if len(rf.log) == 0 {
@@ -623,7 +622,7 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 	got_reply := 0
 	reply := make(chan RequestPreVoteReply, rf.all_server_number)
 	for i := 0; i < rf.all_server_number; i++ {
-		go rf.requestOneServerPreVote(i, &reply)
+		go rf.requestOneServerPreVote(i, &reply, this_round_term)
 	}
 
 	for {
