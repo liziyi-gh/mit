@@ -109,8 +109,10 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
+	log.Printf("Server[%d] External get state", rf.me)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	log.Printf("Server[%d] External get state: hold the lock", rf.me)
 
 	term = rf.current_term
 	if rf.status == LEADER {
@@ -266,9 +268,9 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		rf.mu.Unlock()
 		return
 	}
-	if i%3 == 0 {
-		log.Printf("Server[%d] start new round beat", rf.me)
-	}
+	// if i%3 == 0 {
+	// 	log.Printf("Server[%d] start new round beat", rf.me)
+	// }
 	args.TERM = rf.current_term
 	args.LEADER_ID = rf.me
 	args.LEADER_COMMIT = rf.commit_index
@@ -357,7 +359,8 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	rf.current_term = args.TERM
 	rf.voted_for = -1
 	if prev_status != rf.status {
-		log.Printf("Server[%d] become follower", rf.me)
+		log.Printf("Server[%d] new leader is %d, become follower", rf.me, args.LEADER_ID)
+		// log.Printf("Server[%d] become follower", rf.me)
 	}
 
 	// TODO: other thing to append entries
@@ -669,7 +672,9 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 			rf.becomeCandidate()
 
 			log.Printf("Server[%d] win the pre vote", rf.me)
-			this_round_term, _ = rf.GetState()
+			rf.mu.Lock()
+			this_round_term = rf.current_term
+			rf.mu.Unlock()
 			go rf.newVote(this_round_term)
 			return true
 		}
@@ -745,11 +750,16 @@ func (rf *Raft) ticker() {
 		time.Sleep(time.Duration(duration) * time.Millisecond)
 
 		rf.mu.Lock()
+
+		// if have a leader
 		if rf.receive_from_leader || rf.status == LEADER {
 			rf.receive_from_leader = false
 			rf.mu.Unlock()
 			continue
 		}
+
+		// do not have a leader
+		rf.receive_from_leader = false
 
 		if rf.status == FOLLOWER {
 			this_round_term := rf.current_term
