@@ -306,12 +306,6 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 	reply.SUCCESS = false
 	log.Printf("Server[%d] got pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
-	// have voted for some one else
-	if rf.voted_for != -1 && rf.voted_for != args.CANDIDATE_ID {
-		log.Printf("Server[%d] reject pre vote request from %d, because have voted server[%d], at term %d", rf.me, args.CANDIDATE_ID, rf.voted_for, rf.current_term)
-		return
-	}
-
 	// caller term less than us
 	if args.NEXT_TERM < rf.current_term {
 		log.Printf("Server[%d] reject pre vote request from Server[%d], term too low", rf.me, args.CANDIDATE_ID)
