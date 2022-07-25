@@ -553,6 +553,7 @@ func (rf *Raft) newVote(this_round_term int) {
 		}
 
 		got_tickets += 1
+		log.Printf("Server[%d] got vote tickets number is %d", rf.me, got_tickets)
 
 		// current status is not candidate anymore
 		rf.mu.Lock()
@@ -662,6 +663,7 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 		}
 
 		got_tickets += 1
+		log.Printf("Server[%d] got pre vote tickets number is %d", rf.me, got_tickets)
 
 		// current status is not pre candidate anymore
 
@@ -819,11 +821,11 @@ func (rf *Raft) ticker() {
 
 		if rf.status == CANDIDATE {
 			// NOTE: only start pre vote once?
-			// rf.status = FOLLOWER
-			// rf.leader_id = -1
+			rf.becomeCandidate(rf.current_term+1)
+			go rf.newVote(rf.current_term)
 			rf.mu.Unlock()
 
-			log.Printf("Server[%d] did not finish vote in time, become follower", rf.me)
+			log.Printf("Server[%d] did not finish vote in time, candidate term + 1, new term is %d", rf.me, rf.current_term)
 			continue
 		}
 
