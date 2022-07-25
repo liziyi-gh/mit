@@ -317,10 +317,6 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 		log.Printf("Server[%d] reject pre vote request from Server[%d], term too low", rf.me, args.CANDIDATE_ID)
 		return
 	}
-	// caller term greater than us
-	if rf.current_term < args.NEXT_TERM-1 {
-		rf.becomeFollower(args.NEXT_TERM - 1)
-	}
 
 	// last AppendEntries call was received less than election timeout ago
 	if rf.receive_from_leader {
@@ -365,21 +361,17 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		reply.SUCCESS = false
 		return
 	}
-	if rf.status != FOLLOWER {
-		log.Printf("Server[%d] accept heart beat from server[%d]", rf.me, args.LEADER_ID)
+	if rf.status != FOLLOWER || rf.leader_id != args.LEADER_ID{
+		log.Printf("Server[%d] accept new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
 	}
-
-	prev_status := rf.status
 
 	rf.status = FOLLOWER
 	rf.receive_from_leader = true
-	rf.current_term = args.TERM
-	rf.voted_for = -1
-	rf.leader_id = args.LEADER_ID
-	if prev_status != rf.status {
-		log.Printf("Server[%d] new leader is %d, become follower", rf.me, args.LEADER_ID)
-		// log.Printf("Server[%d] become follower", rf.me)
+	if rf.current_term < args.TERM{
+		rf.voted_for = -1
 	}
+	rf.current_term = args.TERM
+	rf.leader_id = args.LEADER_ID
 
 	// TODO: other thing to append entries
 
