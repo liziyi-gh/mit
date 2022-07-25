@@ -514,6 +514,8 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this
 		ok = rf.sendRequestVote(index, args, reply)
 
 		if !ok {
+			internal := 10
+			time.Sleep(time.Duration(internal) * time.Millisecond)
 			continue
 		}
 
@@ -575,9 +577,9 @@ func (rf *Raft) newVote(this_round_term int) {
 		} else {
 			// tickets enough
 			rf.status = LEADER
-			rf.mu.Unlock()
 
-			log.Printf("Server[%d] become LEADER", rf.me)
+			log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
+			rf.mu.Unlock()
 			rf.sendOneRoundHeartBeat()
 			go rf.sendHeartBeat()
 
@@ -624,6 +626,8 @@ func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestPreVoteReply
 		ok = rf.sendPreVote(index, args, reply)
 
 		if !ok {
+			internal := 10
+			time.Sleep(time.Duration(internal) * time.Millisecond)
 			continue
 		}
 
@@ -778,7 +782,7 @@ func (rf *Raft) ticker() {
 		// time.Sleep().
 
 		duration := rand.Intn(150) + 250
-		log.Printf("Server[%d] ticker: wait time is %d(ms)", rf.me, duration)
+		log.Printf("Server[%d] ticker: new wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
 
@@ -821,7 +825,7 @@ func (rf *Raft) ticker() {
 
 		if rf.status == CANDIDATE {
 			// NOTE: only start pre vote once?
-			rf.becomeCandidate(rf.current_term+1)
+			rf.becomeCandidate(rf.current_term + 1)
 			go rf.newVote(rf.current_term)
 			rf.mu.Unlock()
 
@@ -830,6 +834,7 @@ func (rf *Raft) ticker() {
 		}
 
 		// code unreachable
+		log.Printf("Server[%d] reach code unreachable", rf.me)
 		rf.mu.Unlock()
 
 	}
