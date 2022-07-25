@@ -355,13 +355,13 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		reply.SUCCESS = false
 		return
 	}
-	if rf.status != FOLLOWER || rf.leader_id != args.LEADER_ID{
+	if rf.status != FOLLOWER || rf.leader_id != args.LEADER_ID {
 		log.Printf("Server[%d] accept new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
 	}
 
 	rf.status = FOLLOWER
 	rf.receive_from_leader = true
-	if rf.current_term < args.TERM{
+	if rf.current_term < args.TERM {
 		rf.voted_for = -1
 	}
 	rf.current_term = args.TERM
@@ -385,20 +385,22 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// I have newer term
 	if rf.current_term > args.TERM {
-		log.Printf("Server[%d] reject vote request from %d, because its term %d lower than current term %d", rf.me, args.CANDIDATE_ID, args.TERM, rf.current_term)
+		log.Printf("Server[%d] reject vote request from %d, because its term %d lower than current term %d",
+			rf.me, args.CANDIDATE_ID, args.TERM, rf.current_term)
 		return
 	}
 
 	// caller term greater than us
 	if rf.current_term < args.TERM {
-		// NOTE: why could PySyncObj do that? it would not cause mutilply leaders??
+		// NOTE: it would not cause mutilply leaders??
 		// update: of course not! 1 term, 1 server, 1 ticket, fair enough.
 		rf.becomeFollower(args.TERM)
 	}
 
 	// I have voted for other server
 	if rf.voted_for != -1 && rf.voted_for != args.CANDIDATE_ID {
-		log.Printf("Server[%d] reject vote request from %d, because have voted server[%d], at term %d", rf.me, args.CANDIDATE_ID, rf.voted_for, rf.current_term)
+		log.Printf("Server[%d] reject vote request from %d, because have voted server[%d], at term %d",
+			rf.me, args.CANDIDATE_ID, rf.voted_for, rf.current_term)
 		return
 	}
 
@@ -656,7 +658,6 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 		log.Printf("Server[%d] got pre vote tickets number is %d", rf.me, got_tickets)
 
 		// current status is not pre candidate anymore
-
 		rf.mu.Lock()
 		if rf.status != PRECANDIDATE {
 			rf.status = FOLLOWER
@@ -669,7 +670,7 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 		if rf.current_term != this_round_term {
 			rf.status = FOLLOWER
 			rf.mu.Unlock()
-			log.Printf("Server[%d] quit pre vote, not this term anymore", rf.me)
+			log.Printf("Server[%d] quit pre vote, not term %d anymore", rf.me, this_round_term)
 			return false
 		}
 
@@ -683,16 +684,17 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 			}
 			rf.mu.Unlock()
 			continue
-		} else {
-			// tickets enough
-			rf.becomeCandidate(this_round_term + 1)
-			log.Printf("Server[%d] win the pre vote", rf.me)
-
-			this_round_term = rf.current_term
-			rf.mu.Unlock()
-			go rf.newVote(this_round_term)
-			return true
 		}
+
+		// tickets enough
+		rf.becomeCandidate(this_round_term + 1)
+		log.Printf("Server[%d] win the pre vote", rf.me)
+
+		this_round_term = rf.current_term
+		rf.mu.Unlock()
+		go rf.newVote(this_round_term)
+
+		return true
 	}
 }
 
