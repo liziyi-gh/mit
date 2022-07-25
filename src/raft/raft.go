@@ -82,6 +82,7 @@ type Raft struct {
 
 	// sync usage
 	receive_from_leader bool
+	leader_id           int
 
 	// Persistent on all servers
 	current_term int
@@ -253,8 +254,6 @@ func (rf *Raft) sendoneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		ok = rf.sendAppendEntry(server, args, reply)
 	}
 
-	// log.Printf("Server[%d] send heart beat to server[%d]", rf.me, server)
-
 	return
 }
 
@@ -268,9 +267,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		rf.mu.Unlock()
 		return
 	}
-	// if i%3 == 0 {
-	// 	log.Printf("Server[%d] start new round beat", rf.me)
-	// }
+
 	args.TERM = rf.current_term
 	args.LEADER_ID = rf.me
 	args.LEADER_COMMIT = rf.commit_index
@@ -309,25 +306,45 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 	reply.SUCCESS = false
 	log.Printf("Server[%d] got pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
-	// FIXME: begin: I am not sure this part is right
-
+	// have voted for some one else
 	if rf.voted_for != -1 && rf.voted_for != args.CANDIDATE_ID {
 		log.Printf("Server[%d] reject pre vote request from %d, because have voted server[%d], at term %d", rf.me, args.CANDIDATE_ID, rf.voted_for, rf.current_term)
 		return
 	}
-
-	// FIXME: end: I am not sure this part is right
 
 	// caller term less than us
 	if args.NEXT_TERM < rf.current_term {
 		log.Printf("Server[%d] reject pre vote request from Server[%d], term too low", rf.me, args.CANDIDATE_ID)
 		return
 	}
+	// caller term greater than us
+	if rf.current_term < args.NEXT_TERM-1 {
+		rf.becomeFollower(args.NEXT_TERM - 1)
+	}
 
 	// last AppendEntries call was received less than election timeout ago
 	if rf.receive_from_leader {
-		log.Printf("Server[%d] reject pre vote request from Server[%d], already have leader", rf.me, args.CANDIDATE_ID)
+		log.Printf("Server[%d] reject pre vote request from Server[%d], already have leader [%d]", rf.me, args.CANDIDATE_ID, rf.leader_id)
 		return
+	}
+
+	// I have newer log
+	if len(rf.log) > 0 {
+		my_latest_log := &rf.log[len(rf.log)-1]
+
+		if my_latest_log.TERM != args.PREV_LOG.TERM {
+			if my_latest_log.TERM > args.PREV_LOG.TERM {
+				log.Printf("Server[%d] reject vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
+				return
+			}
+		}
+
+		if my_latest_log.TERM == args.PREV_LOG.TERM {
+			if my_latest_log.INDEX > args.PREV_LOG.INDEX {
+				log.Printf("Server[%d] reject vote request from %d, because have newer log, 2", rf.me, args.CANDIDATE_ID)
+				return
+			}
+		}
 	}
 
 	log.Printf("Server[%d] granted pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
@@ -358,6 +375,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	rf.receive_from_leader = true
 	rf.current_term = args.TERM
 	rf.voted_for = -1
+	rf.leader_id = args.LEADER_ID
 	if prev_status != rf.status {
 		log.Printf("Server[%d] new leader is %d, become follower", rf.me, args.LEADER_ID)
 		// log.Printf("Server[%d] become follower", rf.me)
@@ -383,6 +401,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.current_term > args.TERM {
 		log.Printf("Server[%d] reject vote request from %d, because its term %d lower than current term %d", rf.me, args.CANDIDATE_ID, args.TERM, rf.current_term)
 		return
+	}
+
+	// caller term greater than us
+	if rf.current_term < args.TERM {
+		// NOTE: why could PySyncObj do that? it would not cause mutilply leaders??
+		// update: of course not! 1 term, 1 server, 1 ticket, fair enough.
+		rf.becomeFollower(args.TERM)
 	}
 
 	// I have voted for other server
@@ -668,11 +693,9 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 			continue
 		} else {
 			// tickets enough
-			rf.mu.Unlock()
-			rf.becomeCandidate()
-
+			rf.becomeCandidate(this_round_term + 1)
 			log.Printf("Server[%d] win the pre vote", rf.me)
-			rf.mu.Lock()
+
 			this_round_term = rf.current_term
 			rf.mu.Unlock()
 			go rf.newVote(this_round_term)
@@ -726,13 +749,21 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-func (rf *Raft) becomeCandidate() {
-	rf.mu.Lock()
+// use this function when hold the lock
+func (rf *Raft) becomeCandidate(new_term int) {
 	rf.voted_for = -1
-	rf.current_term += 1
+	rf.current_term = new_term
 	rf.status = CANDIDATE
-	rf.mu.Unlock()
 	log.Printf("Server[%d] become candidate", rf.me)
+}
+
+// use this function when hold the lock
+func (rf *Raft) becomeFollower(new_term int) {
+	rf.status = FOLLOWER
+	rf.current_term = new_term
+	rf.voted_for = -1
+	rf.leader_id = -1
+	rf.receive_from_leader = false
 }
 
 // The Ticker go routine starts a new election if this peer hasn't received
@@ -751,21 +782,27 @@ func (rf *Raft) ticker() {
 
 		rf.mu.Lock()
 
+		// if I am leader
+		if rf.status == LEADER {
+			rf.mu.Unlock()
+			continue
+		}
+
 		// if have a leader
-		if rf.receive_from_leader || rf.status == LEADER {
+		if rf.receive_from_leader {
 			rf.receive_from_leader = false
 			rf.mu.Unlock()
 			continue
 		}
 
-		// do not have a leader
-		rf.receive_from_leader = false
-
 		if rf.status == FOLLOWER {
 			this_round_term := rf.current_term
+			// TODO: wrap to function becomePreCandidate
+			rf.leader_id = -1
+			rf.receive_from_leader = false
 			rf.status = PRECANDIDATE
 
-			// start new vote
+			// start new pre vote
 			go rf.askPreVote(this_round_term)
 			rf.mu.Unlock()
 			continue
@@ -773,6 +810,7 @@ func (rf *Raft) ticker() {
 
 		if rf.status == PRECANDIDATE {
 			rf.status = FOLLOWER
+			rf.leader_id = -1
 			rf.mu.Unlock()
 
 			log.Printf("Server[%d] did not finish pre vote in time, become follower", rf.me)
@@ -780,7 +818,9 @@ func (rf *Raft) ticker() {
 		}
 
 		if rf.status == CANDIDATE {
-			rf.status = FOLLOWER
+			// NOTE: only start pre vote once?
+			// rf.status = FOLLOWER
+			// rf.leader_id = -1
 			rf.mu.Unlock()
 
 			log.Printf("Server[%d] did not finish vote in time, become follower", rf.me)
@@ -821,6 +861,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
 	rf.voted_for = -1
+	rf.leader_id = -1
 	rf.status = FOLLOWER
 	rf.all_server_number = len(rf.peers)
 	rf.quorum_number = (rf.all_server_number + 1) / 2
