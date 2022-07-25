@@ -1,30 +1,33 @@
-rm -f *.log
+rm ./*.log
 
-# for i in {1..5}
 i=0
 while [ -z "${tmp}" ]
 do
     ((i=i+1))
-    go test -run 2A > tester.${i}.log
-    # go test -run TestInitialElection2A > tester.${i}.log
-    # go test -run TestReElection2A -race > tester.${i}.log
-    # go test -run TestManyElections2A > tester.${i}.log
+    TESTER_LOG_FILE=/tmp/tmp-fs/tester.${i}.log
+    RAFT_LOG_FILE=/tmp/tmp-fs/raft.log
+    go test -run 2A > ${TESTER_LOG_FILE}
+    # go test -run TestInitialElection2A > ${TESTER_LOG_FILE}
+    # go test -run TestReElection2A -race > ${TESTER_LOG_FILE}
+    # go test -run TestManyElections2A > ${TESTER_LOG_FILE}
 
-    tmp=$(grep FAIL tester.${i}.log)
-    tmp2=$(grep "DATA RACE" tester.${i}.log)
+    tmp=$(grep FAIL ${TESTER_LOG_FILE})
+    tmp2=$(grep "DATA RACE" ${TESTER_LOG_FILE})
     if [ ! -z "${tmp2}" ]
     then
         echo "Data race ${i} test"
-        cp raft.log raft.${i}.log
+        mv ${TESTER_LOG_FILE} ./tester.${i}.log
+        mv ${RAFT_LOG_FILE} raft.${i}.log
     fi
 
     if [ ! -z "${tmp}" ]
     then
         echo "Failed ${i} test"
-        mv raft.log raft.${i}.log
+        mv ${TESTER_LOG_FILE} ./tester.${i}.log
+        mv ${RAFT_LOG_FILE} raft.${i}.log
     else
         echo "Pass ${i} test"
-        rm -f raft.log
-        rm -f tester.${i}.log
+        rm -f ${RAFT_LOG_FILE}
+        rm -f ${TESTER_LOG_FILE}
     fi
 done
