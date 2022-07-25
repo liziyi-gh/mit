@@ -744,19 +744,31 @@ func (rf *Raft) killed() bool {
 }
 
 // use this function when hold the lock
+func (rf *Raft) becomePreCandidate() {
+	rf.leader_id = -1
+	rf.receive_from_leader = false
+	rf.status = PRECANDIDATE
+	log.Printf("Server[%d] become pre-candidate", rf.me)
+	go rf.askPreVote(rf.current_term)
+}
+
+// use this function when hold the lock
 func (rf *Raft) becomeCandidate(new_term int) {
 	rf.voted_for = -1
 	rf.current_term = new_term
 	rf.status = CANDIDATE
 	log.Printf("Server[%d] become candidate", rf.me)
+	go rf.newVote(rf.current_term)
 }
 
 // use this function when hold the lock
 func (rf *Raft) becomeFollower(new_term int) {
 	rf.status = FOLLOWER
-	rf.current_term = new_term
-	rf.voted_for = -1
 	rf.leader_id = -1
+	if rf.current_term < new_term {
+		rf.voted_for = -1
+	}
+	rf.current_term = new_term
 	rf.receive_from_leader = false
 }
 
@@ -790,21 +802,13 @@ func (rf *Raft) ticker() {
 		}
 
 		if rf.status == FOLLOWER {
-			this_round_term := rf.current_term
-			// TODO: wrap to function becomePreCandidate
-			rf.leader_id = -1
-			rf.receive_from_leader = false
-			rf.status = PRECANDIDATE
-
-			// start new pre vote
-			go rf.askPreVote(this_round_term)
+			rf.becomePreCandidate()
 			rf.mu.Unlock()
 			continue
 		}
 
 		if rf.status == PRECANDIDATE {
-			rf.status = FOLLOWER
-			rf.leader_id = -1
+			rf.becomeFollower(rf.current_term)
 			rf.mu.Unlock()
 
 			log.Printf("Server[%d] did not finish pre vote in time, become follower", rf.me)
@@ -814,7 +818,6 @@ func (rf *Raft) ticker() {
 		if rf.status == CANDIDATE {
 			// NOTE: only start pre vote once?
 			rf.becomeCandidate(rf.current_term + 1)
-			go rf.newVote(rf.current_term)
 			rf.mu.Unlock()
 
 			log.Printf("Server[%d] did not finish vote in time, candidate term + 1, new term is %d", rf.me, rf.current_term)
