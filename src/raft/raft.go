@@ -110,13 +110,11 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
-	log.Printf("Server[%d] External get state", rf.me)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("Server[%d] External get state: hold the lock", rf.me)
 
 	term = rf.current_term
-	if rf.status == LEADER {
+	if rf.statusIs(LEADER) {
 		isleader = true
 	} else {
 		isleader = false
@@ -263,7 +261,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 	reply := make([]RequestAppendEntryReply, rf.all_server_number)
 
 	rf.mu.Lock()
-	if rf.status != LEADER {
+	if !rf.statusIs(LEADER) {
 		rf.mu.Unlock()
 		return
 	}
@@ -287,7 +285,7 @@ func (rf *Raft) sendHeartBeat() {
 	for {
 		time.Sleep(time.Duration(interval) * time.Millisecond)
 		rf.mu.Lock()
-		if rf.status != LEADER {
+		if !rf.statusIs(LEADER) {
 			rf.mu.Unlock()
 			log.Printf("Server[%d] quit send heart beat, no longer leader", rf.me)
 			return
@@ -322,18 +320,14 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 	if len(rf.log) > 0 {
 		my_latest_log := &rf.log[len(rf.log)-1]
 
-		if my_latest_log.TERM != args.PREV_LOG.TERM {
-			if my_latest_log.TERM > args.PREV_LOG.TERM {
-				log.Printf("Server[%d] reject vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
-				return
-			}
+		if (my_latest_log.TERM != args.PREV_LOG.TERM) && (my_latest_log.TERM > args.PREV_LOG.TERM) {
+			log.Printf("Server[%d] reject pre vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
+			return
 		}
 
-		if my_latest_log.TERM == args.PREV_LOG.TERM {
-			if my_latest_log.INDEX > args.PREV_LOG.INDEX {
-				log.Printf("Server[%d] reject vote request from %d, because have newer log, 2", rf.me, args.CANDIDATE_ID)
-				return
-			}
+		if (my_latest_log.TERM == args.PREV_LOG.TERM) && (my_latest_log.INDEX > args.PREV_LOG.INDEX) {
+			log.Printf("Server[%d] reject pre vote request from %d, because have newer log, 2nd case", rf.me, args.CANDIDATE_ID)
+			return
 		}
 	}
 
@@ -346,26 +340,17 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.status != FOLLOWER {
-		log.Printf("Server[%d] receive heart beat from server[%d]", rf.me, args.LEADER_ID)
-	}
 
 	if args.TERM < rf.current_term {
 		log.Printf("Server[%d] reject heart beat from server[%d]", rf.me, args.LEADER_ID)
 		reply.SUCCESS = false
 		return
 	}
-	if rf.status != FOLLOWER || rf.leader_id != args.LEADER_ID {
+	if !rf.statusIs(FOLLOWER) || rf.leader_id != args.LEADER_ID {
 		log.Printf("Server[%d] accept new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
 	}
 
-	rf.status = FOLLOWER
-	rf.receive_from_leader = true
-	if rf.current_term < args.TERM {
-		rf.voted_for = -1
-	}
-	rf.current_term = args.TERM
-	rf.leader_id = args.LEADER_ID
+	rf.becomeFollower(args.TERM, args.LEADER_ID)
 
 	// TODO: other thing to append entries
 
@@ -392,9 +377,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// caller term greater than us
 	if rf.current_term < args.TERM {
-		// NOTE: it would not cause mutilply leaders??
+		// NOTE: it would not cause mutilply leaders?
 		// update: of course not! 1 term, 1 server, 1 ticket, fair enough.
-		rf.becomeFollower(args.TERM)
+		rf.becomeFollower(args.TERM, -1)
 	}
 
 	// I have voted for other server
@@ -408,18 +393,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if len(rf.log) > 0 {
 		my_latest_log := &rf.log[len(rf.log)-1]
 
-		if my_latest_log.TERM != args.PREV_LOG.TERM {
-			if my_latest_log.TERM > args.PREV_LOG.TERM {
-				log.Printf("Server[%d] reject vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
-				return
-			}
+		if (my_latest_log.TERM != args.PREV_LOG.TERM) && my_latest_log.TERM > args.PREV_LOG.TERM {
+			log.Printf("Server[%d] reject vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
+			return
 		}
 
-		if my_latest_log.TERM == args.PREV_LOG.TERM {
-			if my_latest_log.INDEX > args.PREV_LOG.INDEX {
-				log.Printf("Server[%d] reject vote request from %d, because have newer log, 2", rf.me, args.CANDIDATE_ID)
-				return
-			}
+		if (my_latest_log.TERM == args.PREV_LOG.TERM) && (my_latest_log.INDEX > args.PREV_LOG.INDEX) {
+			log.Printf("Server[%d] reject vote request from %d, because have newer log, 2nd case", rf.me, args.CANDIDATE_ID)
+			return
 		}
 	}
 
@@ -493,7 +474,7 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this
 			log.Printf("Server[%d] quit requestOneServerVote for Server[%d], because new term", rf.me, index)
 			return
 		}
-		if rf.status != CANDIDATE {
+		if !rf.statusIs(CANDIDATE) {
 			rf.mu.Unlock()
 			log.Printf("Server[%d] quit requestOneServerVote for Server[%d], because is not CANDIDATE", rf.me, index)
 			return
@@ -509,7 +490,7 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this
 
 		log.Printf("Server[%d] send vote request to server[%d]", rf.me, index)
 		rf.mu.Lock()
-		if rf.status == CANDIDATE {
+		if rf.statusIs(CANDIDATE) {
 			*ans <- *reply
 		}
 		rf.mu.Unlock()
@@ -562,18 +543,22 @@ func (rf *Raft) newVote(this_round_term int) {
 		if got_tickets < rf.quorum_number {
 			rf.mu.Unlock()
 			continue
-		} else {
-			// tickets enough
-			rf.status = LEADER
-
-			log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
-			rf.mu.Unlock()
-			rf.sendOneRoundHeartBeat()
-			go rf.sendHeartBeat()
-
-			return
 		}
+		// tickets enough
+		rf.status = LEADER
+
+		log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
+		rf.mu.Unlock()
+
+		// NOTE: will unlock trigger schedule so it did not send heartbeat ASAP?
+		rf.sendOneRoundHeartBeat()
+		go rf.sendHeartBeat()
+
+		return
+
 	}
+
+	// code unreachable
 
 }
 
@@ -641,6 +626,7 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 	log.Printf("Server[%d] start new pre vote", rf.me)
 	got_tickets := 0
 	got_reply := 0
+	// NOTE: should just pass pointer, but I have not figured out how make pointer chanel
 	reply := make(chan RequestPreVoteReply, rf.all_server_number)
 	for i := 0; i < rf.all_server_number; i++ {
 		go rf.requestOneServerPreVote(i, &reply, this_round_term)
@@ -657,7 +643,7 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 		got_tickets += 1
 		log.Printf("Server[%d] got pre vote tickets number is %d", rf.me, got_tickets)
 
-		// current status is not pre candidate anymore
+		// current status is not pre-candidate anymore
 		rf.mu.Lock()
 		if rf.status != PRECANDIDATE {
 			rf.status = FOLLOWER
@@ -696,6 +682,9 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 
 		return true
 	}
+
+	//code unreachable
+
 }
 
 //
@@ -744,6 +733,11 @@ func (rf *Raft) killed() bool {
 }
 
 // use this function when hold the lock
+func (rf *Raft) statusIs(status int) bool {
+	return rf.status == status
+}
+
+// use this function when hold the lock
 func (rf *Raft) becomePreCandidate() {
 	rf.leader_id = -1
 	rf.receive_from_leader = false
@@ -754,6 +748,10 @@ func (rf *Raft) becomePreCandidate() {
 
 // use this function when hold the lock
 func (rf *Raft) becomeCandidate(new_term int) {
+	if new_term <= rf.current_term {
+		log.Printf("Server[%d] Error: becomeCandidate in same term", rf.me)
+		return
+	}
 	rf.voted_for = -1
 	rf.current_term = new_term
 	rf.status = CANDIDATE
@@ -762,14 +760,23 @@ func (rf *Raft) becomeCandidate(new_term int) {
 }
 
 // use this function when hold the lock
-func (rf *Raft) becomeFollower(new_term int) {
+func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 	rf.status = FOLLOWER
-	rf.leader_id = -1
+
 	if rf.current_term < new_term {
 		rf.voted_for = -1
 	}
 	rf.current_term = new_term
-	rf.receive_from_leader = false
+
+	if new_leader != -1 {
+		rf.receive_from_leader = true
+	} else {
+		rf.receive_from_leader = false
+	}
+
+	rf.leader_id = new_leader
+
+	log.Printf("Server[%d] become follower", rf.me)
 }
 
 // The Ticker go routine starts a new election if this peer hasn't received
@@ -808,7 +815,7 @@ func (rf *Raft) ticker() {
 		}
 
 		if rf.status == PRECANDIDATE {
-			rf.becomeFollower(rf.current_term)
+			rf.becomeFollower(rf.current_term, -1)
 			rf.mu.Unlock()
 
 			log.Printf("Server[%d] did not finish pre vote in time, become follower", rf.me)
@@ -825,10 +832,20 @@ func (rf *Raft) ticker() {
 		}
 
 		// code unreachable
-		log.Printf("Server[%d] reach code unreachable", rf.me)
+		log.Printf("Server[%d] reach code unreachable in ticker", rf.me)
 		rf.mu.Unlock()
 
 	}
+}
+
+func initLogSetting() {
+	file, err := os.OpenFile("/tmp/tmp-fs/raft.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.SetOutput(file)
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 }
 
 //
@@ -850,19 +867,17 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
-	file, err := os.OpenFile("/tmp/tmp-fs/raft.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
-	if err != nil {
-		log.Fatal(err)
-	}
+	initLogSetting()
 
-	log.SetOutput(file)
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	rf.mu.Lock()
 
 	rf.voted_for = -1
 	rf.leader_id = -1
 	rf.status = FOLLOWER
 	rf.all_server_number = len(rf.peers)
 	rf.quorum_number = (rf.all_server_number + 1) / 2
+
+	rf.mu.Unlock()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
