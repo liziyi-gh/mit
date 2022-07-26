@@ -228,17 +228,12 @@ type RequestPreVoteReply struct {
 	SUCCESS bool // true means caller would receive vote if it was a candidate
 }
 
-func (rf *Raft) sendPreVote(server int, args *RequestPreVoteArgs, reply *RequestPreVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestPreVote", args, reply)
-	return ok
-}
-
 func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestAppendEntry", args, reply)
 	return ok
 }
 
-func (rf *Raft) sendoneAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
+func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	ok := rf.sendAppendEntry(server, args, reply)
 	for !ok {
 		interval := 10
@@ -276,7 +271,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		if i == args.LEADER_ID {
 			continue
 		}
-		go rf.sendoneAppendEntry(i, args, &reply[i])
+		go rf.sendOneAppendEntry(i, args, &reply[i])
 	}
 }
 
@@ -294,6 +289,25 @@ func (rf *Raft) sendHeartBeat() {
 
 		rf.sendOneRoundHeartBeat()
 	}
+}
+
+func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if args.TERM < rf.current_term {
+		log.Printf("Server[%d] reject heart beat from server[%d]", rf.me, args.LEADER_ID)
+		reply.SUCCESS = false
+		return
+	}
+	if !rf.statusIs(FOLLOWER) || rf.leader_id != args.LEADER_ID {
+		log.Printf("Server[%d] accept new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
+	}
+
+	rf.becomeFollower(args.TERM, args.LEADER_ID)
+
+	// TODO: other thing to append entries
+
 }
 
 func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteReply) {
@@ -335,25 +349,6 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 
 	reply.SUCCESS = true
 	return
-}
-
-func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	if args.TERM < rf.current_term {
-		log.Printf("Server[%d] reject heart beat from server[%d]", rf.me, args.LEADER_ID)
-		reply.SUCCESS = false
-		return
-	}
-	if !rf.statusIs(FOLLOWER) || rf.leader_id != args.LEADER_ID {
-		log.Printf("Server[%d] accept new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
-	}
-
-	rf.becomeFollower(args.TERM, args.LEADER_ID)
-
-	// TODO: other thing to append entries
-
 }
 
 //
@@ -445,6 +440,11 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
+func (rf *Raft) sendPreVote(server int, args *RequestPreVoteArgs, reply *RequestPreVoteReply) bool {
+	ok := rf.peers[server].Call("Raft.RequestPreVote", args, reply)
+	return ok
+}
+
 func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this_round_term int) {
 	// args are the same, so it actually can use only one variable, but I'm lazy
 	args := &RequestVoteArgs{}
@@ -491,6 +491,59 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this
 		log.Printf("Server[%d] send vote request to server[%d]", rf.me, index)
 		rf.mu.Lock()
 		if rf.statusIs(CANDIDATE) {
+			*ans <- *reply
+		}
+		rf.mu.Unlock()
+		return
+
+	}
+}
+
+func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestPreVoteReply, this_round_term int) {
+	args := &RequestPreVoteArgs{}
+	reply := &RequestPreVoteReply{}
+
+	rf.mu.Lock()
+	args.NEXT_TERM = this_round_term + 1
+	args.CANDIDATE_ID = rf.me
+
+	if len(rf.log) == 0 {
+		args.PREV_LOG = Log{
+			TERM:  -1,
+			INDEX: -1,
+		}
+	} else {
+		args.PREV_LOG = rf.log[len(rf.log)-1]
+	}
+	rf.mu.Unlock()
+
+	for {
+		ok := false
+
+		rf.mu.Lock()
+		if rf.current_term != this_round_term {
+			rf.mu.Unlock()
+			log.Printf("Server[%d] quit requestOneServerPreVote for Server[%d], because new term", rf.me, index)
+			return
+		}
+
+		if rf.status != PRECANDIDATE {
+			rf.mu.Unlock()
+			log.Printf("Server[%d] quit requestOneServerPreVote for Server[%d], because is not PRECANDIDATE", rf.me, index)
+			return
+		}
+		rf.mu.Unlock()
+		ok = rf.sendPreVote(index, args, reply)
+
+		if !ok {
+			internal := 10
+			time.Sleep(time.Duration(internal) * time.Millisecond)
+			continue
+		}
+
+		log.Printf("Server[%d] send pre vote request to server[%d]", rf.me, index)
+		rf.mu.Lock()
+		if rf.status == PRECANDIDATE {
 			*ans <- *reply
 		}
 		rf.mu.Unlock()
@@ -563,60 +616,7 @@ func (rf *Raft) newVote(this_round_term int) {
 
 }
 
-func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestPreVoteReply, this_round_term int) {
-	args := &RequestPreVoteArgs{}
-	reply := &RequestPreVoteReply{}
-
-	rf.mu.Lock()
-	args.NEXT_TERM = this_round_term + 1
-	args.CANDIDATE_ID = rf.me
-
-	if len(rf.log) == 0 {
-		args.PREV_LOG = Log{
-			TERM:  -1,
-			INDEX: -1,
-		}
-	} else {
-		args.PREV_LOG = rf.log[len(rf.log)-1]
-	}
-	rf.mu.Unlock()
-
-	for {
-		ok := false
-
-		rf.mu.Lock()
-		if rf.current_term != this_round_term {
-			rf.mu.Unlock()
-			log.Printf("Server[%d] quit requestOneServerPreVote for Server[%d], because new term", rf.me, index)
-			return
-		}
-
-		if rf.status != PRECANDIDATE {
-			rf.mu.Unlock()
-			log.Printf("Server[%d] quit requestOneServerPreVote for Server[%d], because is not PRECANDIDATE", rf.me, index)
-			return
-		}
-		rf.mu.Unlock()
-		ok = rf.sendPreVote(index, args, reply)
-
-		if !ok {
-			internal := 10
-			time.Sleep(time.Duration(internal) * time.Millisecond)
-			continue
-		}
-
-		log.Printf("Server[%d] send pre vote request to server[%d]", rf.me, index)
-		rf.mu.Lock()
-		if rf.status == PRECANDIDATE {
-			*ans <- *reply
-		}
-		rf.mu.Unlock()
-		return
-
-	}
-}
-
-func (rf *Raft) askPreVote(this_round_term int) bool {
+func (rf *Raft) newPreVote(this_round_term int) bool {
 	rf.mu.Lock()
 	if this_round_term != rf.current_term {
 		rf.mu.Unlock()
@@ -755,7 +755,7 @@ func (rf *Raft) becomePreCandidate() {
 	rf.receive_from_leader = false
 	rf.status = PRECANDIDATE
 	log.Printf("Server[%d] become pre-candidate", rf.me)
-	go rf.askPreVote(rf.current_term)
+	go rf.newPreVote(rf.current_term)
 }
 
 // use this function when hold the lock
