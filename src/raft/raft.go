@@ -517,6 +517,7 @@ func (rf *Raft) newVote(this_round_term int) {
 	}
 
 	for {
+		// FIXME: here cause goroutine leak!
 		vote_reply := <-reply
 		log.Printf("Server[%d] got vote reply, granted is %t", rf.me, vote_reply.VOTE_GRANTED)
 		if !vote_reply.VOTE_GRANTED {
@@ -633,6 +634,7 @@ func (rf *Raft) askPreVote(this_round_term int) bool {
 	}
 
 	for {
+		// FIXME: here cause goroutine leak!
 		pre_vote_reply := <-reply
 		got_reply += 1
 		log.Printf("Server[%d] got pre vote reply, granted is %t", rf.me, pre_vote_reply.SUCCESS)
@@ -707,6 +709,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	// is not leader
+	if !rf.statusIs(LEADER) {
+		return index, term, false
+	}
+
+	// TODO:
+	term = rf.current_term
 
 	return index, term, isLeader
 }
