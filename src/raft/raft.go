@@ -55,8 +55,9 @@ type ApplyMsg struct {
 }
 
 type Log struct {
-	INDEX int
-	TERM  int
+	INDEX   int
+	TERM    int
+	command interface{}
 }
 
 const (
