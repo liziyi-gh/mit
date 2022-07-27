@@ -102,6 +102,8 @@ type Raft struct {
 	// Convinence constants
 	all_server_number int
 	quorum_number     int
+	timeout_const_ms  int
+	timeout_rand_ms   int
 }
 
 // return currentTerm and whether this server
@@ -566,51 +568,59 @@ func (rf *Raft) newVote(this_round_term int) {
 	got_tickets := 0
 	reply := make(chan RequestVoteReply, rf.all_server_number)
 	for i := 0; i < rf.all_server_number; i++ {
-		// NOTE: should very careful about goroutine leak
 		go rf.requestOneServerVote(i, &reply, this_round_term)
 	}
 
+	timeout_ms := rf.timeout_const_ms + rf.timeout_rand_ms
+
 	for {
-		// FIXME: here cause goroutine leak!
-		vote_reply := <-reply
-		log.Printf("Server[%d] got vote reply, granted is %t", rf.me, vote_reply.VOTE_GRANTED)
-		if !vote_reply.VOTE_GRANTED {
-			continue
-		}
+		select {
+		case vote_reply := <-reply:
+			log.Printf("Server[%d] got vote reply, granted is %t", rf.me, vote_reply.VOTE_GRANTED)
+			if !vote_reply.VOTE_GRANTED {
+				continue
+			}
 
-		got_tickets += 1
-		log.Printf("Server[%d] got vote tickets number is %d", rf.me, got_tickets)
+			got_tickets += 1
+			log.Printf("Server[%d] got vote tickets number is %d", rf.me, got_tickets)
 
-		// current status is not candidate anymore
-		rf.mu.Lock()
-		if rf.status != CANDIDATE {
+			// current status is not candidate anymore
+			rf.mu.Lock()
+			if rf.status != CANDIDATE {
+				rf.mu.Unlock()
+				return
+			}
+			// term is new term
+			if this_round_term != rf.current_term {
+				rf.mu.Unlock()
+				log.Printf("Server[%d] quit last vote, because term %d is old", rf.me, this_round_term)
+				return
+			}
+
+			// tickets not enough
+			if got_tickets < rf.quorum_number {
+				rf.mu.Unlock()
+				continue
+			}
+			// tickets enough
+			rf.status = LEADER
+
+			log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
 			rf.mu.Unlock()
+
+			// NOTE: will unlock trigger schedule so it did not send heartbeat ASAP?
+			rf.sendOneRoundHeartBeat()
+			go rf.sendHeartBeat()
+
 			return
-		}
-		// term is new term
-		if this_round_term != rf.current_term {
-			rf.mu.Unlock()
-			log.Printf("Server[%d] quit last vote, because term %d is old", rf.me, this_round_term)
+
+		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
+			log.Printf("Server[%d] did not finish vote in time", rf.me)
 			return
+
+		default:
+			time.Sleep(time.Duration(10) * time.Millisecond)
 		}
-
-		// tickets not enough
-		if got_tickets < rf.quorum_number {
-			rf.mu.Unlock()
-			continue
-		}
-		// tickets enough
-		rf.status = LEADER
-
-		log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
-		rf.mu.Unlock()
-
-		// NOTE: will unlock trigger schedule so it did not send heartbeat ASAP?
-		rf.sendOneRoundHeartBeat()
-		go rf.sendHeartBeat()
-
-		return
-
 	}
 
 	// code unreachable
@@ -634,56 +644,67 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 		go rf.requestOneServerPreVote(i, &reply, this_round_term)
 	}
 
+	timeout_ms := rf.timeout_const_ms + rf.timeout_rand_ms
+
 	for {
-		// FIXME: here cause goroutine leak!
-		pre_vote_reply := <-reply
-		got_reply += 1
-		log.Printf("Server[%d] got pre vote reply, granted is %t", rf.me, pre_vote_reply.SUCCESS)
-		if !pre_vote_reply.SUCCESS {
-			continue
-		}
+		select {
+		case pre_vote_reply := <-reply:
+			got_reply += 1
+			log.Printf("Server[%d] got pre vote reply, granted is %t", rf.me, pre_vote_reply.SUCCESS)
+			if !pre_vote_reply.SUCCESS {
+				continue
+			}
 
-		got_tickets += 1
-		log.Printf("Server[%d] got pre vote tickets number is %d", rf.me, got_tickets)
+			got_tickets += 1
+			log.Printf("Server[%d] got pre vote tickets number is %d", rf.me, got_tickets)
 
-		// current status is not pre-candidate anymore
-		rf.mu.Lock()
-		if rf.status != PRECANDIDATE {
-			rf.status = FOLLOWER
-			rf.mu.Unlock()
-			log.Printf("Server[%d] quit pre vote, not PRECANDIDATE anymore", rf.me)
-			return false
-		}
-
-		// term is new term
-		if rf.current_term != this_round_term {
-			rf.status = FOLLOWER
-			rf.mu.Unlock()
-			log.Printf("Server[%d] quit pre vote, not term %d anymore", rf.me, this_round_term)
-			return false
-		}
-
-		// tickets not enough
-		if got_tickets < rf.quorum_number {
-			if got_reply == rf.all_server_number {
+			// current status is not pre-candidate anymore
+			rf.mu.Lock()
+			if rf.status != PRECANDIDATE {
 				rf.status = FOLLOWER
 				rf.mu.Unlock()
-				log.Printf("Server[%d] lost the pre vote", rf.me)
+				log.Printf("Server[%d] quit pre vote, not PRECANDIDATE anymore", rf.me)
 				return false
 			}
+
+			// term is new term
+			if rf.current_term != this_round_term {
+				rf.status = FOLLOWER
+				rf.mu.Unlock()
+				log.Printf("Server[%d] quit pre vote, not term %d anymore", rf.me, this_round_term)
+				return false
+			}
+
+			// tickets not enough
+			if got_tickets < rf.quorum_number {
+				if got_reply == rf.all_server_number {
+					rf.status = FOLLOWER
+					rf.mu.Unlock()
+					log.Printf("Server[%d] lost the pre vote", rf.me)
+					return false
+				}
+				rf.mu.Unlock()
+				continue
+			}
+
+			// tickets enough
+			rf.becomeCandidate(this_round_term + 1)
+			log.Printf("Server[%d] win the pre vote", rf.me)
+
+			this_round_term = rf.current_term
 			rf.mu.Unlock()
-			continue
+			go rf.newVote(this_round_term)
+
+			return true
+
+		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
+			log.Printf("Server[%d] did not finish pre-vote in time", rf.me)
+			return false
+
+		default:
+			time.Sleep(time.Duration(10) * time.Millisecond)
+
 		}
-
-		// tickets enough
-		rf.becomeCandidate(this_round_term + 1)
-		log.Printf("Server[%d] win the pre vote", rf.me)
-
-		this_round_term = rf.current_term
-		rf.mu.Unlock()
-		go rf.newVote(this_round_term)
-
-		return true
 	}
 
 	//code unreachable
@@ -801,7 +822,7 @@ func (rf *Raft) ticker() {
 		// be started and to randomize sleeping time using
 		// time.Sleep().
 
-		duration := rand.Intn(150) + 250
+		duration := rand.Intn(rf.timeout_rand_ms) + rf.timeout_const_ms
 		log.Printf("Server[%d] ticker: new wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
@@ -889,6 +910,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.status = FOLLOWER
 	rf.all_server_number = len(rf.peers)
 	rf.quorum_number = (rf.all_server_number + 1) / 2
+	rf.timeout_const_ms = 250
+	rf.timeout_rand_ms = 150
 
 	rf.mu.Unlock()
 
