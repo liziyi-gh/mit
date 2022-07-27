@@ -190,9 +190,10 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	TERM         int
-	CANDIDATE_ID int
-	PREV_LOG     Log // last log in candidate, if no log, term is -1, also index
+	TERM           int
+	CANDIDATE_ID   int
+	PREV_LOG_INDEX int
+	PREV_LOG_TERM  int
 }
 
 //
@@ -206,29 +207,18 @@ type RequestVoteReply struct {
 }
 
 type RequestAppendEntryArgs struct {
-	TERM          int // leader's term
-	LEADER_ID     int // for follower redirect clients
-	PREV_LOG      Log
-	ENTRIES       []Log // log entries to store
-	LEADER_COMMIT int   // leader's commit_index
+	TERM           int   // leader's term
+	LEADER_ID      int   // for follower redirect clients
+	ENTRIES        []Log // log entries to store
+	LEADER_COMMIT  int   // leader's commit_index
+	PREV_LOG_INDEX int
+	PREV_LOG_TERM  int
 }
 
 type RequestAppendEntryReply struct {
 	TERM    int  // receiver's current term
 	SUCCESS bool // true if contain matching prev log
 
-}
-
-type RequestPreVoteArgs struct {
-	NEXT_TERM    int // sender server next term
-	CANDIDATE_ID int // self id
-	PREV_LOG     Log // last log
-
-}
-
-type RequestPreVoteReply struct {
-	TERM    int  // receiver's current term
-	SUCCESS bool // true means caller would receive vote if it was a candidate
 }
 
 func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
@@ -307,25 +297,24 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		log.Printf("Server[%d] accept new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
 	}
 
-	if !rf.statusIs(FOLLOWER){
+	if !rf.statusIs(FOLLOWER) {
 		rf.becomeFollower(args.TERM, args.LEADER_ID)
 	}
-
 
 	// TODO: other thing to append entries
 
 }
 
-func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteReply) {
+func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	reply.TERM = rf.current_term
-	reply.SUCCESS = false
+	reply.VOTE_GRANTED = false
 	log.Printf("Server[%d] got pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
 	// caller term less than us
-	if args.NEXT_TERM < rf.current_term {
+	if args.TERM < rf.current_term {
 		log.Printf("Server[%d] reject pre vote request from Server[%d], term too low", rf.me, args.CANDIDATE_ID)
 		return
 	}
@@ -340,12 +329,12 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 	if len(rf.log) > 0 {
 		my_latest_log := &rf.log[len(rf.log)-1]
 
-		if (my_latest_log.TERM != args.PREV_LOG.TERM) && (my_latest_log.TERM > args.PREV_LOG.TERM) {
+		if (my_latest_log.TERM != args.PREV_LOG_TERM) && (my_latest_log.TERM > args.PREV_LOG_TERM) {
 			log.Printf("Server[%d] reject pre vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
 			return
 		}
 
-		if (my_latest_log.TERM == args.PREV_LOG.TERM) && (my_latest_log.INDEX > args.PREV_LOG.INDEX) {
+		if (my_latest_log.TERM == args.PREV_LOG_TERM) && (my_latest_log.INDEX > args.PREV_LOG_INDEX) {
 			log.Printf("Server[%d] reject pre vote request from %d, because have newer log, 2nd case", rf.me, args.CANDIDATE_ID)
 			return
 		}
@@ -353,7 +342,7 @@ func (rf *Raft) RequestPreVote(args *RequestPreVoteArgs, reply *RequestPreVoteRe
 
 	log.Printf("Server[%d] granted pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
-	reply.SUCCESS = true
+	reply.VOTE_GRANTED = true
 	return
 }
 
@@ -394,12 +383,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if len(rf.log) > 0 {
 		my_latest_log := &rf.log[len(rf.log)-1]
 
-		if (my_latest_log.TERM != args.PREV_LOG.TERM) && my_latest_log.TERM > args.PREV_LOG.TERM {
+		if (my_latest_log.TERM != args.PREV_LOG_TERM) && my_latest_log.TERM > args.PREV_LOG_TERM {
 			log.Printf("Server[%d] reject vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
 			return
 		}
 
-		if (my_latest_log.TERM == args.PREV_LOG.TERM) && (my_latest_log.INDEX > args.PREV_LOG.INDEX) {
+		if (my_latest_log.TERM == args.PREV_LOG_TERM) && (my_latest_log.INDEX > args.PREV_LOG_INDEX) {
 			log.Printf("Server[%d] reject vote request from %d, because have newer log, 2nd case", rf.me, args.CANDIDATE_ID)
 			return
 		}
@@ -446,7 +435,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-func (rf *Raft) sendPreVote(server int, args *RequestPreVoteArgs, reply *RequestPreVoteReply) bool {
+func (rf *Raft) sendPreVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestPreVote", args, reply)
 	return ok
 }
@@ -460,14 +449,11 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this
 	args.TERM = this_round_term
 	args.CANDIDATE_ID = rf.me
 	if len(rf.log) == 0 {
-		args.PREV_LOG = Log{
-			TERM:  -1,
-			INDEX: -1,
-		}
+		args.PREV_LOG_TERM = -1
+		args.PREV_LOG_INDEX = -1
 	} else {
-		// NOTE: what is = meaning?
-		// update: it create a copy, nothing to worry about
-		args.PREV_LOG = rf.log[len(rf.log)-1]
+		args.PREV_LOG_INDEX = rf.log[len(rf.log)-1].INDEX
+		args.PREV_LOG_TERM = rf.log[len(rf.log)-1].TERM
 	}
 	rf.mu.Unlock()
 
@@ -505,21 +491,20 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this
 	}
 }
 
-func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestPreVoteReply, this_round_term int) {
-	args := &RequestPreVoteArgs{}
-	reply := &RequestPreVoteReply{}
+func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestVoteReply, this_round_term int) {
+	args := &RequestVoteArgs{}
+	reply := &RequestVoteReply{}
 
 	rf.mu.Lock()
-	args.NEXT_TERM = this_round_term + 1
+	args.TERM = this_round_term + 1
 	args.CANDIDATE_ID = rf.me
 
 	if len(rf.log) == 0 {
-		args.PREV_LOG = Log{
-			TERM:  -1,
-			INDEX: -1,
-		}
+		args.PREV_LOG_TERM = -1
+		args.PREV_LOG_INDEX = -1
 	} else {
-		args.PREV_LOG = rf.log[len(rf.log)-1]
+		args.PREV_LOG_TERM = rf.log[len(rf.log)-1].TERM
+		args.PREV_LOG_INDEX = rf.log[len(rf.log)-1].INDEX
 	}
 	rf.mu.Unlock()
 
@@ -642,7 +627,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 	got_tickets := 0
 	got_reply := 0
 	// NOTE: should just pass pointer, but I have not figured out how make pointer chanel
-	reply := make(chan RequestPreVoteReply, rf.all_server_number)
+	reply := make(chan RequestVoteReply, rf.all_server_number)
 	for i := 0; i < rf.all_server_number; i++ {
 		go rf.requestOneServerPreVote(i, &reply, this_round_term)
 	}
@@ -653,8 +638,8 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 		select {
 		case pre_vote_reply := <-reply:
 			got_reply += 1
-			log.Printf("Server[%d] got pre vote reply, granted is %t", rf.me, pre_vote_reply.SUCCESS)
-			if !pre_vote_reply.SUCCESS {
+			log.Printf("Server[%d] got pre vote reply, granted is %t", rf.me, pre_vote_reply.VOTE_GRANTED)
+			if !pre_vote_reply.VOTE_GRANTED {
 				continue
 			}
 
