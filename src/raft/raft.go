@@ -224,7 +224,6 @@ type RequestAppendEntryArgs struct {
 type RequestAppendEntryReply struct {
 	TERM    int  // receiver's current term
 	SUCCESS bool // true if contain matching prev log
-
 }
 
 func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
@@ -258,6 +257,13 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 // a really bad solution is cyclicity check all peer's commit_index
 // or keep track of append entry RPC, get the reply, if all server success
 // the update commit_index
+
+func (rf *Raft) leaderUpdateCommitIndex(){
+	for {
+		new_commit := <- rf.recently_commit
+	}
+}
+
 // how can I make it semaphore like? every function pass its recently
 // append log index and its server id to a channel!
 // handle one server, what if leader was kill or no longer leader
@@ -834,6 +840,7 @@ func (rf *Raft) becomeLeader() {
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
 	go rf.sendHeartBeat()
+	//go rf.leaderUpdateCommitIndex()
 
 	log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
 	return
