@@ -67,6 +67,11 @@ const (
 	LEADER
 )
 
+type ServerCommitIndex struct {
+	server       int
+	commid_index int
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -95,9 +100,10 @@ type Raft struct {
 	last_applied int
 
 	// Volatile on leaders
-	next_index  []int
-	match_index []int
-	status      int
+	next_index      []int
+	match_index     []int
+	status          int
+	recently_commit chan ServerCommitIndex
 
 	// Convinence constants
 	all_server_number int
@@ -243,21 +249,46 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 	return
 }
 
+// the Start function just put the command to leader'log
+// and this function should monitor the leader'log
+// if there is any new log, append to its associated peer.
+// when all peers have this log, update the commit_index for leader
+// then all peers would know by heart beat or other append entry rpc.
+// the critical question is, I don't know how to do that...
+// a really bad solution is cyclicity check all peer's commit_index
+// or keep track of append entry RPC, get the reply, if all server success
+// the update commit_index
+// how can I make it semaphore like? every function pass its recently
+// append log index and its server id to a channel!
+// handle one server, what if leader was kill or no longer leader
+// no longer a leader: peer will reply false, so that I can
+// check is it still be leader, return if not.
+// was kill, doesn't really matter? the whole program was kill?
+// what about test case kill? I don't know how that work.
+
+// let upper level know the new commit_index, do what it want to do.
+func (rf *Raft) updateCommitIndex(new_commit_index int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if new_commit_index <= rf.commit_index {
+		// TODO: log here
+		return
+	}
+	// TODO: really update
+	rf.commit_index = new_commit_index
+}
+
 func (rf *Raft) sendOneRoundHeartBeat() {
 	i := 0
 	args := &RequestAppendEntryArgs{}
 	reply := make([]RequestAppendEntryReply, rf.all_server_number)
-
-	rf.mu.Lock()
 	if !rf.statusIs(LEADER) {
-		rf.mu.Unlock()
 		return
 	}
 
 	args.TERM = rf.current_term
 	args.LEADER_ID = rf.me
 	args.LEADER_COMMIT = rf.commit_index
-	rf.mu.Unlock()
 
 	for i = 0; i < rf.all_server_number; i++ {
 		// don't send heart beat to myself
@@ -278,9 +309,9 @@ func (rf *Raft) sendHeartBeat() {
 			log.Printf("Server[%d] quit send heart beat, no longer leader", rf.me)
 			return
 		}
-		rf.mu.Unlock()
 
 		rf.sendOneRoundHeartBeat()
+		rf.mu.Unlock()
 	}
 }
 
@@ -302,6 +333,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	}
 
 	// TODO: other thing to append entries
+	go rf.updateCommitIndex(args.LEADER_COMMIT)
 
 }
 
@@ -591,14 +623,8 @@ func (rf *Raft) newVote(this_round_term int) {
 				continue
 			}
 			// tickets enough
-			rf.status = LEADER
-
-			log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
+			rf.becomeLeader()
 			rf.mu.Unlock()
-
-			// NOTE: will unlock trigger schedule so it did not send heartbeat ASAP?
-			rf.sendOneRoundHeartBeat()
-			go rf.sendHeartBeat()
 
 			return
 
@@ -799,6 +825,18 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 	rf.leader_id = new_leader
 
 	log.Printf("Server[%d] become follower", rf.me)
+}
+
+//use this function when hold the lock
+func (rf *Raft) becomeLeader() {
+	rf.status = LEADER
+
+	// NOTE: send heartbeat ASAP
+	rf.sendOneRoundHeartBeat()
+	go rf.sendHeartBeat()
+
+	log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
+	return
 }
 
 // The Ticker go routine starts a new election if this peer hasn't received
