@@ -57,7 +57,7 @@ type ApplyMsg struct {
 type Log struct {
 	INDEX   int
 	TERM    int
-	command interface{}
+	COMMAND interface{}
 }
 
 const (
@@ -69,7 +69,7 @@ const (
 
 type ServerCommitIndex struct {
 	server       int
-	commid_index int
+	commid_index []int
 }
 
 //
@@ -258,9 +258,22 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 // or keep track of append entry RPC, get the reply, if all server success
 // the update commit_index
 
-func (rf *Raft) leaderUpdateCommitIndex(){
+func (rf *Raft) leaderUpdateCommitIndex() {
+	// record := make(map[int]int)
 	for {
-		new_commit := <- rf.recently_commit
+		// TODO:
+		// TODO: update rf.next_index
+		// new_commit := <-rf.recently_commit
+		// if val, ok := record[new_commit.commid_index]; ok {
+		// 	record[new_commit.commid_index] += val
+		// } else {
+		// 	record[new_commit.commid_index] = 1
+		// }
+
+		// if record[new_commit.commid_index] == rf.all_server_number {
+		// 	// TODO:
+		// }
+
 	}
 }
 
@@ -274,8 +287,6 @@ func (rf *Raft) leaderUpdateCommitIndex(){
 
 // let upper level know the new commit_index, do what it want to do.
 func (rf *Raft) updateCommitIndex(new_commit_index int) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	if new_commit_index <= rf.commit_index {
 		// TODO: log here
 		return
@@ -328,8 +339,10 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	if args.TERM < rf.current_term {
 		log.Printf("Server[%d] reject heart beat from server[%d]", rf.me, args.LEADER_ID)
 		reply.SUCCESS = false
+		reply.TERM = rf.current_term
 		return
 	}
+
 	if !rf.statusIs(FOLLOWER) || rf.leader_id != args.LEADER_ID {
 		log.Printf("Server[%d] accept new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
 	}
@@ -338,8 +351,28 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		rf.becomeFollower(args.TERM, args.LEADER_ID)
 	}
 
-	// TODO: other thing to append entries
-	go rf.updateCommitIndex(args.LEADER_COMMIT)
+	// TODO: things to append entries
+	rf.updateCommitIndex(args.LEADER_COMMIT)
+
+	// TODO: may need find a way to speed up this
+	// FIXME: empty log
+	latest_log := &rf.log[len(rf.log)-1]
+	if args.PREV_LOG_INDEX != latest_log.INDEX {
+		reply.SUCCESS = false
+		if args.PREV_LOG_TERM < latest_log.TERM {
+			log.Printf("Server[%d] follower log term newer than leader log term, impossible", rf.me)
+		}
+		return
+	}
+
+	// rpc call success
+	reply.SUCCESS = true
+
+	for i, j := 0, len(args.ENTRIES)-1; i < j; i, j = i+1, j-1 {
+		args.ENTRIES[i], args.ENTRIES[j] = args.ENTRIES[j], args.ENTRIES[i]
+	}
+
+	rf.log = append(rf.log, args.ENTRIES...)
 
 }
 
@@ -731,6 +764,96 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 
 }
 
+func (rf *Raft) handleOneEntryOneServer(server int,
+	args *RequestAppendEntryArgs,
+	reply *RequestAppendEntryReply,
+	this_round_term int) {
+
+	rf.mu.Lock()
+	if server == rf.me {
+		reply.TERM = rf.current_term
+		reply.SUCCESS = true
+		rf.mu.Unlock()
+
+		commit_index := make([]int, len(args.ENTRIES))
+		for i := 0; i < len(args.ENTRIES); i++ {
+			commit_index[i] = args.ENTRIES[i].INDEX
+		}
+		rf.recently_commit <- ServerCommitIndex{
+			server:       server,
+			commid_index: commit_index,
+		}
+
+		return
+	}
+	rf.mu.Unlock()
+
+	for {
+		rf.sendOneAppendEntry(server, args, reply)
+		if reply.SUCCESS {
+			commit_index := make([]int, len(args.ENTRIES))
+			for i := 0; i < len(args.ENTRIES); i++ {
+				commit_index[i] = args.ENTRIES[i].INDEX
+			}
+			rf.recently_commit <- ServerCommitIndex{
+				server:       server,
+				commid_index: commit_index,
+			}
+
+			return
+		}
+
+		rf.mu.Lock()
+		if reply.TERM > rf.current_term {
+			rf.becomeFollower(reply.TERM, -1)
+			rf.mu.Unlock()
+			return
+		}
+
+		if this_round_term != rf.current_term {
+			rf.mu.Unlock()
+			return
+		}
+
+		rf.match_index[server] -= 1
+
+		old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
+		new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
+		args.PREV_LOG_TERM = new_prev_log.TERM
+		args.PREV_LOG_INDEX = new_prev_log.INDEX
+		args.ENTRIES = append(args.ENTRIES, old_prev_log)
+
+		rf.mu.Unlock()
+	}
+}
+
+func (rf *Raft) newRoundAppend(command interface{}, index int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	args := make([]RequestAppendEntryArgs, rf.all_server_number)
+	reply := make([]RequestAppendEntryReply, rf.all_server_number)
+	this_round_term := rf.current_term
+
+	log := Log{
+		INDEX:   index,
+		TERM:    this_round_term,
+		COMMAND: command,
+	}
+
+	logs := []Log{log}
+
+	for i := 0; i < rf.all_server_number; i++ {
+		args[i].TERM = this_round_term
+		args[i].LEADER_ID = rf.me
+		args[i].LEADER_COMMIT = rf.commit_index
+		args[i].ENTRIES = logs
+		args[i].PREV_LOG_INDEX = rf.match_index[i]
+		args[i].PREV_LOG_TERM = rf.log[rf.match_index[i]-1].TERM
+		go rf.handleOneEntryOneServer(i, &args[i], &reply[i], this_round_term)
+	}
+}
+
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -761,6 +884,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	// TODO:
 	term = rf.current_term
+	isLeader = true
+	index = rf.next_index[rf.me]
+	rf.next_index[rf.me] += 1
+	new_log := Log{
+		INDEX:   index,
+		TERM:    rf.current_term,
+		COMMAND: command,
+	}
+	rf.log = append(rf.log, new_log)
+	go rf.newRoundAppend(command, index)
 
 	return index, term, isLeader
 }
@@ -839,8 +972,8 @@ func (rf *Raft) becomeLeader() {
 
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
+	// TODO: re-initialize next_index and match_index
 	go rf.sendHeartBeat()
-	//go rf.leaderUpdateCommitIndex()
 
 	log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
 	return
@@ -945,6 +1078,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.quorum_number = (rf.all_server_number + 1) / 2
 	rf.timeout_const_ms = 250
 	rf.timeout_rand_ms = 150
+	rf.match_index = make([]int, rf.all_server_number)
+	rf.next_index = make([]int, rf.all_server_number)
+
+	for i := 0; i < rf.all_server_number; i++ {
+		rf.next_index[i] = 1
+	}
 
 	rf.mu.Unlock()
 
@@ -953,6 +1092,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+
+	// is all_server_number has been write in leaderUpdateCommitIndex??
+	go rf.leaderUpdateCommitIndex()
 
 	return rf
 }
