@@ -848,7 +848,9 @@ func (rf *Raft) newRoundAppend(command interface{}, index int) {
 		args[i].LEADER_COMMIT = rf.commit_index
 		args[i].ENTRIES = logs
 		args[i].PREV_LOG_INDEX = rf.match_index[i]
-		args[i].PREV_LOG_TERM = rf.log[rf.match_index[i]-1].TERM
+		if rf.match_index[i] > 0 {
+			args[i].PREV_LOG_TERM = rf.log[rf.match_index[i]-1].TERM
+		}
 		go rf.handleOneEntryOneServer(i, &args[i], &reply[i], this_round_term)
 	}
 }
