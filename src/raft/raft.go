@@ -347,9 +347,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		log.Printf("Server[%d] accept new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
 	}
 
-	if !rf.statusIs(FOLLOWER) {
-		rf.becomeFollower(args.TERM, args.LEADER_ID)
-	}
+	rf.becomeFollower(args.TERM, args.LEADER_ID)
 
 	// TODO: things to append entries
 	rf.updateCommitIndex(args.LEADER_COMMIT)
