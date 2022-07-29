@@ -371,8 +371,10 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		args.ENTRIES[i], args.ENTRIES[j] = args.ENTRIES[j], args.ENTRIES[i]
 	}
 
+	// FIXME: what happen if appen empty slice to empty slice
 	rf.log = append(rf.log, args.ENTRIES...)
 
+	return
 }
 
 func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
@@ -883,7 +885,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return index, term, false
 	}
 
-	// TODO:
 	term = rf.current_term
 	isLeader = true
 	index = rf.next_index[rf.me]
