@@ -355,14 +355,15 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	rf.updateCommitIndex(args.LEADER_COMMIT)
 
 	// TODO: may need find a way to speed up this
-	// FIXME: empty log
-	latest_log := &rf.log[len(rf.log)-1]
-	if args.PREV_LOG_INDEX != latest_log.INDEX {
-		reply.SUCCESS = false
-		if args.PREV_LOG_TERM < latest_log.TERM {
-			log.Printf("Server[%d] follower log term newer than leader log term, impossible", rf.me)
+	if len(rf.log)-1 > 0 {
+		latest_log := &rf.log[len(rf.log)-1]
+		if args.PREV_LOG_INDEX != latest_log.INDEX {
+			reply.SUCCESS = false
+			if args.PREV_LOG_TERM < latest_log.TERM {
+				log.Printf("Server[%d] follower log term newer than leader log term, impossible", rf.me)
+			}
+			return
 		}
-		return
 	}
 
 	// rpc call success
