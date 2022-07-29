@@ -6,10 +6,11 @@ do
     ((i=i+1))
     TESTER_LOG_FILE=/tmp/tmp-fs/tester.${i}.log
     RAFT_LOG_FILE=/tmp/tmp-fs/raft.log
-    go test -run 2A > ${TESTER_LOG_FILE}
-    # go test -run TestInitialElection2A > ${TESTER_LOG_FILE}
+    # go test -run 2A > ${TESTER_LOG_FILE}
+    # go test -run TestInitialElection2A -race > ${TESTER_LOG_FILE}
     # go test -run TestReElection2A -race > ${TESTER_LOG_FILE}
-    # go test -run TestManyElections2A > ${TESTER_LOG_FILE}
+    # go test -run TestManyElections2A -race > ${TESTER_LOG_FILE}
+    go test -run TestBasicAgree2B -race > ${TESTER_LOG_FILE}
 
     tmp=$(grep FAIL ${TESTER_LOG_FILE})
     tmp2=$(grep "DATA RACE" ${TESTER_LOG_FILE})
