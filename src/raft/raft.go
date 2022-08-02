@@ -23,6 +23,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -100,10 +101,13 @@ type Raft struct {
 	last_applied int
 
 	// Volatile on leaders
-	next_index      []int
-	match_index     []int
-	status          int
-	recently_commit chan ServerCommitIndex
+	next_index  []int
+	match_index []int
+	status      int
+
+	// Convinence chanel
+	recently_commit   chan ServerCommitIndex
+	append_entry_chan []chan *RequestAppendEntryArgs
 
 	// Convinence constants
 	all_server_number int
@@ -248,32 +252,40 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 	return
 }
 
-// the Start function just put the command to leader'log
-// and this function should monitor the leader'log
-// if there is any new log, append to its associated peer.
-// when all peers have this log, update the commit_index for leader
-// then all peers would know by heart beat or other append entry rpc.
-// the critical question is, I don't know how to do that...
-// a really bad solution is cyclicity check all peer's commit_index
-// or keep track of append entry RPC, get the reply, if all server success
-// the update commit_index
-
 func (rf *Raft) leaderUpdateCommitIndex() {
-	// record := make(map[int]int)
+	commited := make([]int, 0)
 	for {
-		// TODO:
-		// TODO: update rf.next_index
-		// new_commit := <-rf.recently_commit
-		// if val, ok := record[new_commit.commid_index]; ok {
-		// 	record[new_commit.commid_index] += val
-		// } else {
-		// 	record[new_commit.commid_index] = 1
-		// }
+		new_commit := <-rf.recently_commit
+		rf.mu.Lock()
 
-		// if record[new_commit.commid_index] == rf.all_server_number {
-		// 	// TODO:
-		// }
+		for i := 0; i < len(new_commit.commid_index); i++ {
+			tmp := new_commit.commid_index[i]
 
+			for j := 0; j < rf.all_server_number; j++ {
+				all_server_commit := true
+				if rf.next_index[j] < tmp {
+					all_server_commit = false
+				}
+
+				if all_server_commit {
+					commited = append(commited, tmp)
+				}
+			}
+		}
+
+		sort.Slice(commited, func(i, j int) bool {
+			return commited[i] < commited[j]
+		})
+
+		for i := 0; i < len(commited); i++ {
+			if commited[i] == rf.commit_index+1 {
+				rf.updateCommitIndex(commited[i])
+			} else {
+				break
+			}
+		}
+
+		rf.mu.Unlock()
 	}
 }
 
@@ -765,67 +777,70 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 
 }
 
-func (rf *Raft) handleOneEntryOneServer(server int,
-	args *RequestAppendEntryArgs,
-	reply *RequestAppendEntryReply,
-	this_round_term int) {
-
-	rf.mu.Lock()
-	if server == rf.me {
-		reply.TERM = rf.current_term
-		reply.SUCCESS = true
-		rf.mu.Unlock()
-
-		commit_index := make([]int, len(args.ENTRIES))
-		for i := 0; i < len(args.ENTRIES); i++ {
-			commit_index[i] = args.ENTRIES[i].INDEX
-		}
-		rf.recently_commit <- ServerCommitIndex{
-			server:       server,
-			commid_index: commit_index,
-		}
-
-		return
+func (rf *Raft) __successAppend(server int, this_round_term int,
+	args *RequestAppendEntryArgs) {
+	commit_index := make([]int, len(args.ENTRIES))
+	for i := 0; i < len(args.ENTRIES); i++ {
+		commit_index[i] = args.ENTRIES[i].INDEX
 	}
+	rf.mu.Lock()
+	rf.next_index[server] += 1
 	rf.mu.Unlock()
+	rf.recently_commit <- ServerCommitIndex{
+		server:       server,
+		commid_index: commit_index,
+	}
+}
+
+func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 
 	for {
+		args := <-rf.append_entry_chan[server]
+		rf.mu.Lock()
+		if rf.current_term != this_round_term {
+			rf.mu.Unlock()
+			return
+		}
+		rf.mu.Unlock()
+
+		if server == rf.me {
+			rf.__successAppend(server, this_round_term, args)
+			continue
+		}
+
+		reply := &RequestAppendEntryReply{}
+		// TODO:
 		rf.sendOneAppendEntry(server, args, reply)
 		if reply.SUCCESS {
-			commit_index := make([]int, len(args.ENTRIES))
-			for i := 0; i < len(args.ENTRIES); i++ {
-				commit_index[i] = args.ENTRIES[i].INDEX
-			}
-			rf.recently_commit <- ServerCommitIndex{
-				server:       server,
-				commid_index: commit_index,
-			}
-
-			return
+			rf.__successAppend(server, this_round_term, args)
+			continue
 		}
-
-		rf.mu.Lock()
-		if reply.TERM > rf.current_term {
-			rf.becomeFollower(reply.TERM, -1)
-			rf.mu.Unlock()
-			return
-		}
-
-		if this_round_term != rf.current_term {
-			rf.mu.Unlock()
-			return
-		}
-
-		rf.match_index[server] -= 1
-
-		old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
-		new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
-		args.PREV_LOG_TERM = new_prev_log.TERM
-		args.PREV_LOG_INDEX = new_prev_log.INDEX
-		args.ENTRIES = append(args.ENTRIES, old_prev_log)
-
-		rf.mu.Unlock()
 	}
+
+	// for {
+
+	// 	rf.mu.Lock()
+	// 	if reply.TERM > rf.current_term {
+	// 		rf.becomeFollower(reply.TERM, -1)
+	// 		rf.mu.Unlock()
+	// 		return
+	// 	}
+
+	// 	if this_round_term != rf.current_term {
+	// 		rf.mu.Unlock()
+	// 		return
+	// 	}
+
+	// 	rf.match_index[server] -= 1
+
+	// 	old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
+	// 	new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
+	// 	args.PREV_LOG_TERM = new_prev_log.TERM
+	// 	args.PREV_LOG_INDEX = new_prev_log.INDEX
+	// 	args.ENTRIES = append(args.ENTRIES, old_prev_log)
+
+	// 	rf.mu.Unlock()
+	// }
 }
 
 func (rf *Raft) newRoundAppend(command interface{}, index int) {
@@ -833,7 +848,6 @@ func (rf *Raft) newRoundAppend(command interface{}, index int) {
 	defer rf.mu.Unlock()
 
 	args := make([]RequestAppendEntryArgs, rf.all_server_number)
-	reply := make([]RequestAppendEntryReply, rf.all_server_number)
 	this_round_term := rf.current_term
 
 	log := Log{
@@ -853,7 +867,8 @@ func (rf *Raft) newRoundAppend(command interface{}, index int) {
 		if rf.match_index[i] > 0 {
 			args[i].PREV_LOG_TERM = rf.log[rf.match_index[i]-1].TERM
 		}
-		go rf.handleOneEntryOneServer(i, &args[i], &reply[i], this_round_term)
+
+		rf.append_entry_chan[i] <- &args[i]
 	}
 }
 
@@ -1082,6 +1097,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.timeout_rand_ms = 150
 	rf.match_index = make([]int, rf.all_server_number)
 	rf.next_index = make([]int, rf.all_server_number)
+
+	rf.recently_commit = make(chan ServerCommitIndex, rf.all_server_number)
+	rf.append_entry_chan = make([]chan *RequestAppendEntryArgs, rf.all_server_number)
 
 	for i := 0; i < rf.all_server_number; i++ {
 		rf.next_index[i] = 1
