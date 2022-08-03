@@ -70,7 +70,7 @@ const (
 
 type ServerCommitIndex struct {
 	server       int
-	commid_index []int
+	commit_index []int
 }
 
 //
@@ -108,6 +108,7 @@ type Raft struct {
 	// Convinence chanel
 	recently_commit   chan ServerCommitIndex
 	append_entry_chan []chan *RequestAppendEntryArgs
+	apply_ch chan ApplyMsg
 
 	// Convinence constants
 	all_server_number int
@@ -132,6 +133,8 @@ func (rf *Raft) GetState() (int, bool) {
 	} else {
 		isleader = false
 	}
+
+	log.Printf("Server[%d] check status is leader %t in term %d", rf.me, isleader, term)
 
 	return term, isleader
 }
@@ -252,30 +255,40 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 	return
 }
 
-func (rf *Raft) leaderUpdateCommitIndex() {
+func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 	commited := make([]int, 0)
 	for {
 		new_commit := <-rf.recently_commit
 		rf.mu.Lock()
+		if current_term != rf.current_term {
+			log.Printf("Server[%d] quit leader update commit, term change", rf.me)
+			rf.mu.Unlock()
+			return
+		}
 
-		for i := 0; i < len(new_commit.commid_index); i++ {
-			tmp := new_commit.commid_index[i]
+		log.Print(new_commit)
+
+		for i := 0; i < len(new_commit.commit_index); i++ {
+			tmp := new_commit.commit_index[i]
+			all_server_commit := true
 
 			for j := 0; j < rf.all_server_number; j++ {
-				all_server_commit := true
-				if rf.next_index[j] < tmp {
+				if rf.next_index[j] <= tmp {
 					all_server_commit = false
+					break
 				}
+			}
 
-				if all_server_commit {
-					commited = append(commited, tmp)
-				}
+			if all_server_commit {
+				commited = append(commited, tmp)
 			}
 		}
 
 		sort.Slice(commited, func(i, j int) bool {
 			return commited[i] < commited[j]
 		})
+		log.Printf("commited is ")
+		log.Print(commited)
 
 		for i := 0; i < len(commited); i++ {
 			if commited[i] == rf.commit_index+1 {
@@ -284,6 +297,8 @@ func (rf *Raft) leaderUpdateCommitIndex() {
 				break
 			}
 		}
+
+		// FIXME: clean commited
 
 		rf.mu.Unlock()
 	}
@@ -303,7 +318,15 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		// TODO: log here
 		return
 	}
-	// TODO: really update
+	tmp := ApplyMsg{
+		CommandValid: true,
+		Command: rf.log[new_commit_index-1].COMMAND,
+		CommandIndex: new_commit_index,
+	}
+	go func (){
+		rf.apply_ch <- tmp
+	}()
+	// TODO: when is commit really do?
 	rf.commit_index = new_commit_index
 }
 
@@ -349,7 +372,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	defer rf.mu.Unlock()
 
 	if args.TERM < rf.current_term {
-		log.Printf("Server[%d] reject heart beat from server[%d]", rf.me, args.LEADER_ID)
+		log.Printf("Server[%d] reject Append Entry RPC from server[%d]", rf.me, args.LEADER_ID)
 		reply.SUCCESS = false
 		reply.TERM = rf.current_term
 		return
@@ -369,6 +392,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		latest_log := &rf.log[len(rf.log)-1]
 		if args.PREV_LOG_INDEX != latest_log.INDEX {
 			reply.SUCCESS = false
+			log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX not matched", rf.me)
 			if args.PREV_LOG_TERM < latest_log.TERM {
 				log.Printf("Server[%d] follower log term newer than leader log term, impossible", rf.me)
 			}
@@ -783,13 +807,18 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 	for i := 0; i < len(args.ENTRIES); i++ {
 		commit_index[i] = args.ENTRIES[i].INDEX
 	}
-	rf.mu.Lock()
-	rf.next_index[server] += 1
-	rf.mu.Unlock()
+
+	if server != rf.me {
+		rf.mu.Lock()
+		rf.next_index[server] += len(args.ENTRIES)
+		rf.mu.Unlock()
+	}
+	// log.Printf("ready send Server[%d] commit message", server)
 	rf.recently_commit <- ServerCommitIndex{
 		server:       server,
-		commid_index: commit_index,
+		commit_index: commit_index,
 	}
+	// log.Printf("send Server[%d] commit message", server)
 }
 
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
@@ -809,38 +838,45 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		}
 
 		reply := &RequestAppendEntryReply{}
-		// TODO:
-		rf.sendOneAppendEntry(server, args, reply)
-		if reply.SUCCESS {
-			rf.__successAppend(server, this_round_term, args)
-			continue
-		}
+
+		for reply.SUCCESS == false {
+			log.Printf("Server[%d] send one Appen Entry RPC to %d", rf.me, server)
+			rf.sendOneAppendEntry(server, args, reply)
+			log.Printf("Server[%d] Appen Entry RPC to %d reply is %t", rf.me, server, reply.SUCCESS)
+			if reply.SUCCESS {
+				rf.__successAppend(server, this_round_term, args)
+				continue
+			}
+
+			// reply is false
+			rf.mu.Lock()
+
+			// new term case 1
+			if this_round_term != rf.current_term {
+				rf.mu.Unlock()
+				return
+			}
+
+			// new term case 2, know from peer
+			if reply.TERM > rf.current_term {
+				rf.becomeFollower(reply.TERM, -1)
+				rf.mu.Unlock()
+				return
+			}
+
+			// log not match
+			rf.match_index[server] -= 1
+
+			old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
+			new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
+			args.PREV_LOG_TERM = new_prev_log.TERM
+			args.PREV_LOG_INDEX = new_prev_log.INDEX
+			args.ENTRIES = append(args.ENTRIES, old_prev_log)
+
+			rf.mu.Unlock()
+		} // end reply false for
 	}
 
-	// for {
-
-	// 	rf.mu.Lock()
-	// 	if reply.TERM > rf.current_term {
-	// 		rf.becomeFollower(reply.TERM, -1)
-	// 		rf.mu.Unlock()
-	// 		return
-	// 	}
-
-	// 	if this_round_term != rf.current_term {
-	// 		rf.mu.Unlock()
-	// 		return
-	// 	}
-
-	// 	rf.match_index[server] -= 1
-
-	// 	old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
-	// 	new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
-	// 	args.PREV_LOG_TERM = new_prev_log.TERM
-	// 	args.PREV_LOG_INDEX = new_prev_log.INDEX
-	// 	args.ENTRIES = append(args.ENTRIES, old_prev_log)
-
-	// 	rf.mu.Unlock()
-	// }
 }
 
 func (rf *Raft) newRoundAppend(command interface{}, index int) {
@@ -850,13 +886,13 @@ func (rf *Raft) newRoundAppend(command interface{}, index int) {
 	args := make([]RequestAppendEntryArgs, rf.all_server_number)
 	this_round_term := rf.current_term
 
-	log := Log{
+	new_log := Log{
 		INDEX:   index,
 		TERM:    this_round_term,
 		COMMAND: command,
 	}
 
-	logs := []Log{log}
+	logs := []Log{new_log}
 
 	for i := 0; i < rf.all_server_number; i++ {
 		args[i].TERM = this_round_term
@@ -899,18 +935,21 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	if !rf.statusIs(LEADER) {
 		return index, term, false
 	}
-
 	term = rf.current_term
 	isLeader = true
 	index = rf.next_index[rf.me]
 	rf.next_index[rf.me] += 1
+
+	go rf.newRoundAppend(command, index)
+
 	new_log := Log{
 		INDEX:   index,
 		TERM:    rf.current_term,
 		COMMAND: command,
 	}
 	rf.log = append(rf.log, new_log)
-	go rf.newRoundAppend(command, index)
+
+	log.Printf("Server[%d] Start accept new log", rf.me)
 
 	return index, term, isLeader
 }
@@ -965,6 +1004,9 @@ func (rf *Raft) becomeCandidate(new_term int) {
 
 // use this function when hold the lock
 func (rf *Raft) becomeFollower(new_term int, new_leader int) {
+	if rf.status != FOLLOWER {
+		log.Printf("Server[%d] become follower", rf.me)
+	}
 	rf.status = FOLLOWER
 
 	if rf.current_term < new_term {
@@ -979,8 +1021,6 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 	}
 
 	rf.leader_id = new_leader
-
-	log.Printf("Server[%d] become follower", rf.me)
 }
 
 //use this function when hold the lock
@@ -991,6 +1031,13 @@ func (rf *Raft) becomeLeader() {
 	rf.sendOneRoundHeartBeat()
 	// TODO: re-initialize next_index and match_index
 	go rf.sendHeartBeat()
+
+	// FIXME: update next_index
+	go rf.leaderUpdateCommitIndex(rf.current_term)
+
+	for i := 0; i < rf.all_server_number; i++ {
+		go rf.handleAppendEntryForOneServer(i, rf.current_term)
+	}
 
 	log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
 	return
@@ -1006,7 +1053,7 @@ func (rf *Raft) ticker() {
 		// time.Sleep().
 
 		duration := rand.Intn(rf.timeout_rand_ms) + rf.timeout_const_ms
-		log.Printf("Server[%d] ticker: new wait time is %d(ms)", rf.me, duration)
+		// log.Printf("Server[%d] ticker: new wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
 
@@ -1100,9 +1147,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.recently_commit = make(chan ServerCommitIndex, rf.all_server_number)
 	rf.append_entry_chan = make([]chan *RequestAppendEntryArgs, rf.all_server_number)
+	rf.apply_ch = applyCh
 
 	for i := 0; i < rf.all_server_number; i++ {
 		rf.next_index[i] = 1
+		rf.append_entry_chan[i] = make(chan *RequestAppendEntryArgs, rf.all_server_number)
 	}
 
 	rf.mu.Unlock()
@@ -1112,9 +1161,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
-
-	// is all_server_number has been write in leaderUpdateCommitIndex??
-	go rf.leaderUpdateCommitIndex()
 
 	return rf
 }
