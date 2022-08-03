@@ -108,7 +108,7 @@ type Raft struct {
 	// Convinence chanel
 	recently_commit   chan ServerCommitIndex
 	append_entry_chan []chan *RequestAppendEntryArgs
-	apply_ch chan ApplyMsg
+	apply_ch          chan ApplyMsg
 
 	// Convinence constants
 	all_server_number int
@@ -320,10 +320,10 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 	}
 	tmp := ApplyMsg{
 		CommandValid: true,
-		Command: rf.log[new_commit_index-1].COMMAND,
+		Command:      rf.log[new_commit_index-1].COMMAND,
 		CommandIndex: new_commit_index,
 	}
-	go func (){
+	go func() {
 		rf.apply_ch <- tmp
 	}()
 	// TODO: when is commit really do?
@@ -394,6 +394,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 			reply.SUCCESS = false
 			log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX not matched", rf.me)
 			if args.PREV_LOG_TERM < latest_log.TERM {
+				log.Printf("args TERM is %d, latest log term is %d", args.PREV_LOG_TERM, latest_log.TERM)
 				log.Printf("Server[%d] follower log term newer than leader log term, impossible", rf.me)
 			}
 			return
