@@ -134,8 +134,6 @@ func (rf *Raft) GetState() (int, bool) {
 		isleader = false
 	}
 
-	log.Printf("Server[%d] check status is leader %t in term %d", rf.me, isleader, term)
-
 	return term, isleader
 }
 
@@ -269,16 +267,19 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 		}
 
 		for _, ele := range new_commit.commit_index {
-			all_server_commit := true
+			commit_server_num := 0
+
+			if ele <= rf.commit_index {
+				continue
+			}
 
 			for j := 0; j < rf.all_server_number; j++ {
-				if rf.next_index[j] <= ele {
-					all_server_commit = false
-					break
+				if rf.next_index[j] > ele {
+					commit_server_num += 1
 				}
 			}
 
-			if all_server_commit {
+			if commit_server_num >= rf.quorum_number {
 				commited = append(commited, ele)
 			}
 		}
@@ -297,7 +298,6 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 				new_commited = append(new_commited, ele)
 			}
 		}
-		// FIXME: clean commited
 		commited = new_commited
 
 		rf.mu.Unlock()
@@ -309,17 +309,24 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		// TODO: log here
 		return
 	}
-	tmp := ApplyMsg{
-		CommandValid: true,
-		Command:      rf.log[new_commit_index-1].COMMAND,
-		CommandIndex: new_commit_index,
+
+	for i := rf.commit_index + 1; i <= new_commit_index; i++ {
+		if i > len(rf.log) {
+			break
+		}
+		tmp := ApplyMsg{
+			CommandValid: true,
+			Command:      rf.log[i-1].COMMAND,
+			CommandIndex: rf.log[i-1].INDEX,
+		}
+		go func() {
+			rf.apply_ch <- tmp
+		}()
+		rf.commit_index = i
+		log.Printf("Server[%d] commit index %d", rf.me, tmp.CommandIndex)
 	}
-	go func() {
-		rf.apply_ch <- tmp
-	}()
 	// TODO: when is commit really do?
-	rf.commit_index = new_commit_index
-	log.Printf("Server[%d] commit index %d", rf.me, new_commit_index)
+
 }
 
 func (rf *Raft) sendOneRoundHeartBeat() {
@@ -374,22 +381,17 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		log.Printf("Server[%d] accept new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
 	}
 
-	rf.becomeFollower(args.TERM, args.LEADER_ID)
-
-	// TODO: things to append entries
-	rf.updateCommitIndex(args.LEADER_COMMIT)
-
-	if len(args.ENTRIES) == 0 {
-		reply.SUCCESS = true
-		return
+	if args.LEADER_ID != rf.me {
+		rf.becomeFollower(args.TERM, args.LEADER_ID)
 	}
 
+	// log did not match
 	// TODO: may need find a way to speed up this
-	if len(rf.log)-1 > 0 {
+	if len(rf.log) > 0 && len(args.ENTRIES) > 0 {
 		latest_log := &rf.log[len(rf.log)-1]
 		if args.PREV_LOG_INDEX != latest_log.INDEX {
 			reply.SUCCESS = false
-			log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX not matched", rf.me)
+			log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched %d", rf.me, args.PREV_LOG_INDEX, latest_log.INDEX)
 			if args.PREV_LOG_TERM < latest_log.TERM {
 				log.Printf("args TERM is %d, latest log term is %d", args.PREV_LOG_TERM, latest_log.TERM)
 				log.Printf("Server[%d] is follower but log term newer than leader log term, reject", rf.me)
@@ -406,6 +408,13 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	}
 
 	rf.log = append(rf.log, args.ENTRIES...)
+
+	if len(args.ENTRIES) > 0 {
+		log.Print("Server[", rf.me, "] going to commit args:", args)
+		log.Print("Server[", rf.me, "] have log", rf.log)
+	}
+
+	rf.updateCommitIndex(args.LEADER_COMMIT)
 
 	return
 }
@@ -474,6 +483,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.current_term < args.TERM {
 		// NOTE: it would not cause mutilply leaders?
 		// update: of course not! 1 term, 1 server, 1 ticket, fair enough.
+		log.Printf("Server[%d] request vote but they have new term ", rf.me)
 		rf.becomeFollower(args.TERM, -1)
 	}
 
@@ -835,10 +845,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		reply := &RequestAppendEntryReply{}
 
 		for reply.SUCCESS == false {
-			log.Printf("Server[%d] send one Appen Entry RPC to %d", rf.me, server)
-			log.Print(args)
 			rf.sendOneAppendEntry(server, args, reply)
-			log.Printf("Server[%d] Appen Entry RPC to %d reply is %t", rf.me, server, reply.SUCCESS)
 			if reply.SUCCESS {
 				rf.__successAppend(server, this_round_term, args)
 				continue
@@ -861,6 +868,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			}
 
 			// log not match
+			log.Print("Server[", rf.me, "] log dismatch, args is ", args)
 			rf.match_index[server] -= 1
 
 			old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
@@ -868,6 +876,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			args.PREV_LOG_TERM = new_prev_log.TERM
 			args.PREV_LOG_INDEX = new_prev_log.INDEX
 			args.ENTRIES = append(args.ENTRIES, old_prev_log)
+			log.Print("Server[", rf.me, "] log dismatch, new args is ", args)
 
 			rf.mu.Unlock()
 		} // end reply false for
@@ -1001,6 +1010,10 @@ func (rf *Raft) becomeCandidate(new_term int) {
 
 // use this function when hold the lock
 func (rf *Raft) becomeFollower(new_term int, new_leader int) {
+	if new_leader == rf.me {
+		log.Printf("Server[%d] become follower by itself, impossble", rf.me)
+		return
+	}
 	if rf.status != FOLLOWER {
 		log.Printf("Server[%d] become follower", rf.me)
 	}
@@ -1026,13 +1039,15 @@ func (rf *Raft) becomeLeader() {
 
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
-	// TODO: re-initialize next_index and match_index
+	// FIXME: re-initialize next_index and match_index
 	go rf.sendHeartBeat()
 
+	// FIXME: cause error when become leader twice
 	// FIXME: update next_index
 	go rf.leaderUpdateCommitIndex(rf.current_term)
 
 	for i := 0; i < rf.all_server_number; i++ {
+		// FIXME: cause error when become leader twice
 		go rf.handleAppendEntryForOneServer(i, rf.current_term)
 	}
 
