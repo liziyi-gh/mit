@@ -260,27 +260,26 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 	for {
 		new_commit := <-rf.recently_commit
 		rf.mu.Lock()
+		log.Printf("get new commit")
+		log.Print(new_commit)
 		if current_term != rf.current_term {
 			log.Printf("Server[%d] quit leader update commit, term change", rf.me)
 			rf.mu.Unlock()
 			return
 		}
 
-		log.Print(new_commit)
-
-		for i := 0; i < len(new_commit.commit_index); i++ {
-			tmp := new_commit.commit_index[i]
+		for _, ele := range new_commit.commit_index {
 			all_server_commit := true
 
 			for j := 0; j < rf.all_server_number; j++ {
-				if rf.next_index[j] <= tmp {
+				if rf.next_index[j] <= ele {
 					all_server_commit = false
 					break
 				}
 			}
 
 			if all_server_commit {
-				commited = append(commited, tmp)
+				commited = append(commited, ele)
 			}
 		}
 
@@ -290,29 +289,21 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 		log.Printf("commited is ")
 		log.Print(commited)
 
-		for i := 0; i < len(commited); i++ {
-			if commited[i] == rf.commit_index+1 {
-				rf.updateCommitIndex(commited[i])
+		new_commited := make([]int, 0)
+		for _, ele := range commited {
+			if ele == rf.commit_index+1 {
+				rf.updateCommitIndex(ele)
 			} else {
-				break
+				new_commited = append(new_commited, ele)
 			}
 		}
-
 		// FIXME: clean commited
+		commited = new_commited
 
 		rf.mu.Unlock()
 	}
 }
 
-// how can I make it semaphore like? every function pass its recently
-// append log index and its server id to a channel!
-// handle one server, what if leader was kill or no longer leader
-// no longer a leader: peer will reply false, so that I can
-// check is it still be leader, return if not.
-// was kill, doesn't really matter? the whole program was kill?
-// what about test case kill? I don't know how that work.
-
-// let upper level know the new commit_index, do what it want to do.
 func (rf *Raft) updateCommitIndex(new_commit_index int) {
 	if new_commit_index <= rf.commit_index {
 		// TODO: log here
@@ -328,6 +319,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 	}()
 	// TODO: when is commit really do?
 	rf.commit_index = new_commit_index
+	log.Printf("Server[%d] commit index %d", rf.me, new_commit_index)
 }
 
 func (rf *Raft) sendOneRoundHeartBeat() {
@@ -387,6 +379,11 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	// TODO: things to append entries
 	rf.updateCommitIndex(args.LEADER_COMMIT)
 
+	if len(args.ENTRIES) == 0 {
+		reply.SUCCESS = true
+		return
+	}
+
 	// TODO: may need find a way to speed up this
 	if len(rf.log)-1 > 0 {
 		latest_log := &rf.log[len(rf.log)-1]
@@ -395,7 +392,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 			log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX not matched", rf.me)
 			if args.PREV_LOG_TERM < latest_log.TERM {
 				log.Printf("args TERM is %d, latest log term is %d", args.PREV_LOG_TERM, latest_log.TERM)
-				log.Printf("Server[%d] follower log term newer than leader log term, impossible", rf.me)
+				log.Printf("Server[%d] is follower but log term newer than leader log term, reject", rf.me)
 			}
 			return
 		}
@@ -408,7 +405,6 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		args.ENTRIES[i], args.ENTRIES[j] = args.ENTRIES[j], args.ENTRIES[i]
 	}
 
-	// FIXME: what happen if appen empty slice to empty slice
 	rf.log = append(rf.log, args.ENTRIES...)
 
 	return
@@ -600,7 +596,7 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this
 	}
 }
 
-func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestVoteReply, this_round_term int) {
+func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, this_round_term int) {
 	args := &RequestVoteArgs{}
 	reply := &RequestVoteReply{}
 
@@ -644,7 +640,7 @@ func (rf *Raft) requestOneServerPreVote(index int, ans *chan RequestVoteReply, t
 		log.Printf("Server[%d] send pre vote request to server[%d]", rf.me, index)
 		rf.mu.Lock()
 		if rf.status == PRECANDIDATE {
-			*ans <- *reply
+			ans <- *reply
 		}
 		rf.mu.Unlock()
 		return
@@ -729,10 +725,9 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 	log.Printf("Server[%d] start new pre vote", rf.me)
 	got_tickets := 0
 	got_reply := 0
-	// NOTE: should just pass pointer, but I have not figured out how make pointer chanel
 	reply := make(chan RequestVoteReply, rf.all_server_number)
 	for i := 0; i < rf.all_server_number; i++ {
-		go rf.requestOneServerPreVote(i, &reply, this_round_term)
+		go rf.requestOneServerPreVote(i, reply, this_round_term)
 	}
 
 	timeout_ms := rf.timeout_const_ms + rf.timeout_rand_ms
@@ -784,7 +779,6 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 
 			this_round_term = rf.current_term
 			rf.mu.Unlock()
-			go rf.newVote(this_round_term)
 
 			return true
 
@@ -842,6 +836,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 
 		for reply.SUCCESS == false {
 			log.Printf("Server[%d] send one Appen Entry RPC to %d", rf.me, server)
+			log.Print(args)
 			rf.sendOneAppendEntry(server, args, reply)
 			log.Printf("Server[%d] Appen Entry RPC to %d reply is %t", rf.me, server, reply.SUCCESS)
 			if reply.SUCCESS {
@@ -900,9 +895,10 @@ func (rf *Raft) newRoundAppend(command interface{}, index int) {
 		args[i].LEADER_ID = rf.me
 		args[i].LEADER_COMMIT = rf.commit_index
 		args[i].ENTRIES = logs
-		args[i].PREV_LOG_INDEX = rf.match_index[i]
-		if rf.match_index[i] > 0 {
-			args[i].PREV_LOG_TERM = rf.log[rf.match_index[i]-1].TERM
+		prev_log_index := index - 1
+		args[i].PREV_LOG_INDEX = prev_log_index
+		if prev_log_index > 0 {
+			args[i].PREV_LOG_TERM = rf.log[prev_log_index-1].TERM
 		}
 
 		rf.append_entry_chan[i] <- &args[i]
