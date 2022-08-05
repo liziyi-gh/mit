@@ -109,17 +109,23 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 	//
 	// wait for the reply.
 	//
-	rep := <-req.replyCh
-	if rep.ok {
-		rb := bytes.NewBuffer(rep.reply)
-		rd := labgob.NewDecoder(rb)
-		if err := rd.Decode(reply); err != nil {
-			log.Fatalf("ClientEnd.Call(): decode reply: %v\n", err)
+	timeout_ms := 10
+	select {
+	case rep := <-req.replyCh:
+		if rep.ok {
+			rb := bytes.NewBuffer(rep.reply)
+			rd := labgob.NewDecoder(rb)
+			if err := rd.Decode(reply); err != nil {
+				log.Fatalf("ClientEnd.Call(): decode reply: %v\n", err)
+			}
+			return true
+		} else {
+			return false
 		}
-		return true
-	} else {
+	case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
 		return false
 	}
+
 }
 
 type Network struct {

@@ -245,7 +245,8 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 	failed_times := 0
 	interval := 10
 	for !ok {
-		if failed_times > 10 {
+		if failed_times >= 2 {
+			log.Print("Server[", rf.me, "] send append entry failed too many times ", failed_times, " to server ", server, "return")
 			return
 		}
 		time.Sleep(time.Duration(interval) * time.Millisecond)
@@ -257,9 +258,10 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		rf.mu.Unlock()
 		ok = rf.sendAppendEntry(server, args, reply)
 		failed_times++
-		log.Print("Server[", rf.me, "] send append entry failed times ", failed_times, " to server ", server)
 		if len(args.ENTRIES) == 0 {
-			log.Printf("Server[%d] send new heartbeat to %d", rf.me, server)
+			log.Print("Server[", rf.me, "] send heartbeat failed times ", failed_times, " to server ", server)
+		} else {
+			log.Print("Server[", rf.me, "] send append entry failed times ", failed_times, " to server ", server)
 		}
 	}
 	log.Printf("Server[%d] send new heartbeat to %d DONE", rf.me, server)
