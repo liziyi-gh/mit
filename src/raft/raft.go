@@ -917,6 +917,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			rf.match_index[server] -= 1
 
 			old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
+			// FIXME: the first log has been wrong
 			new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
 			args.PREV_LOG_TERM = new_prev_log.TERM
 			args.PREV_LOG_INDEX = new_prev_log.INDEX
