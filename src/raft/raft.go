@@ -32,6 +32,14 @@ import (
 	"6.824/labrpc"
 )
 
+func Max(x, y int) int {
+    if x > y {
+        return x
+    }
+    return y
+}
+
+
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -238,8 +246,12 @@ func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply 
 
 func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	ok := rf.sendAppendEntry(server, args, reply)
+	failed_times := 0
+	interval := 10
 	for !ok {
-		interval := 10
+		if failed_times > 10 {
+			return
+		}
 		time.Sleep(time.Duration(interval) * time.Millisecond)
 		rf.mu.Lock()
 		if rf.current_term > args.TERM {
@@ -248,6 +260,7 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		}
 		rf.mu.Unlock()
 		ok = rf.sendAppendEntry(server, args, reply)
+		failed_times++
 	}
 
 	return
@@ -274,6 +287,7 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 			}
 
 			for j := 0; j < rf.all_server_number; j++ {
+				// FIXME: update next_index! and prevent index n+1 can not commit because n did not count
 				if rf.next_index[j] > ele {
 					commit_server_num += 1
 				}
@@ -306,7 +320,6 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 
 func (rf *Raft) updateCommitIndex(new_commit_index int) {
 	if new_commit_index <= rf.commit_index {
-		// TODO: log here
 		return
 	}
 
@@ -319,16 +332,14 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 			Command:      rf.log[i-1].COMMAND,
 			CommandIndex: rf.log[i-1].INDEX,
 		}
-		go func() {
-			rf.apply_ch <- tmp
-		}()
+		rf.apply_ch <- tmp
 		rf.commit_index = i
 		log.Printf("Server[%d] commit index %d", rf.me, tmp.CommandIndex)
 	}
-	// TODO: when is commit really do?
 
 }
 
+// use this function with lock
 func (rf *Raft) sendOneRoundHeartBeat() {
 	i := 0
 	args := &RequestAppendEntryArgs{}
@@ -370,6 +381,9 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	log.Printf("Server[%d] receive Append Entry RPC from server[%d]", rf.me, args.LEADER_ID)
+	log.Print(args)
+
 	if args.TERM < rf.current_term {
 		log.Printf("Server[%d] reject Append Entry RPC from server[%d]", rf.me, args.LEADER_ID)
 		reply.SUCCESS = false
@@ -388,14 +402,23 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	// log did not match
 	// TODO: may need find a way to speed up this
 	if len(rf.log) > 0 && len(args.ENTRIES) > 0 {
-		latest_log := &rf.log[len(rf.log)-1]
-		if args.PREV_LOG_INDEX != latest_log.INDEX {
-			reply.SUCCESS = false
-			log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched %d", rf.me, args.PREV_LOG_INDEX, latest_log.INDEX)
-			if args.PREV_LOG_TERM < latest_log.TERM {
-				log.Printf("args TERM is %d, latest log term is %d", args.PREV_LOG_TERM, latest_log.TERM)
-				log.Printf("Server[%d] is follower but log term newer than leader log term, reject", rf.me)
+		matched := false
+		for i := len(rf.log) - 1; i >= 0; i-- {
+			iter_log := &rf.log[i]
+			// log match
+			if args.PREV_LOG_INDEX == iter_log.INDEX && args.PREV_LOG_TERM == iter_log.TERM {
+				matched = true
+				// match happen before latest log
+				// TODO: find how dismatch is this
+				if i < len(rf.log)-1 {
+					rf.log = rf.log[:i+1]
+				}
+				break
 			}
+		}
+		if !matched {
+			reply.SUCCESS = false
+			log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
 			return
 		}
 	}
@@ -555,7 +578,7 @@ func (rf *Raft) sendPreVote(server int, args *RequestVoteArgs, reply *RequestVot
 	return ok
 }
 
-func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this_round_term int) {
+func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_round_term int) {
 	// args are the same, so it actually can use only one variable, but I'm lazy
 	args := &RequestVoteArgs{}
 	reply := &RequestVoteReply{}
@@ -571,9 +594,13 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this
 		args.PREV_LOG_TERM = rf.log[len(rf.log)-1].TERM
 	}
 	rf.mu.Unlock()
+	failed_times := 0
 
 	for {
 		ok := false
+		if failed_times > 10 {
+			return
+		}
 
 		rf.mu.Lock()
 		if rf.current_term != args.TERM {
@@ -591,6 +618,7 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this
 
 		if !ok {
 			internal := 10
+			failed_times++
 			time.Sleep(time.Duration(internal) * time.Millisecond)
 			continue
 		}
@@ -598,7 +626,7 @@ func (rf *Raft) requestOneServerVote(index int, ans *chan RequestVoteReply, this
 		log.Printf("Server[%d] send vote request to server[%d]", rf.me, index)
 		rf.mu.Lock()
 		if rf.statusIs(CANDIDATE) {
-			*ans <- *reply
+			ans <- *reply
 		}
 		rf.mu.Unlock()
 		return
@@ -622,9 +650,16 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 		args.PREV_LOG_INDEX = rf.log[len(rf.log)-1].INDEX
 	}
 	rf.mu.Unlock()
+	log.Printf("Server[%d] start requestOneServerPreVote", rf.me)
+	defer log.Printf("Server[%d] quit requestOneServerPreVote", rf.me)
+	failed_times := 0
 
 	for {
 		ok := false
+
+		if failed_times > 10 {
+			return
+		}
 
 		rf.mu.Lock()
 		if rf.current_term != this_round_term {
@@ -643,6 +678,7 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 
 		if !ok {
 			internal := 10
+			failed_times++
 			time.Sleep(time.Duration(internal) * time.Millisecond)
 			continue
 		}
@@ -671,7 +707,7 @@ func (rf *Raft) newVote(this_round_term int) {
 	got_tickets := 0
 	reply := make(chan RequestVoteReply, rf.all_server_number)
 	for i := 0; i < rf.all_server_number; i++ {
-		go rf.requestOneServerVote(i, &reply, this_round_term)
+		go rf.requestOneServerVote(i, reply, this_round_term)
 	}
 
 	timeout_ms := rf.timeout_const_ms + rf.timeout_rand_ms
@@ -733,6 +769,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 	rf.mu.Unlock()
 
 	log.Printf("Server[%d] start new pre vote", rf.me)
+	defer log.Printf("Server[%d] quit pre vote", rf.me)
 	got_tickets := 0
 	got_reply := 0
 	reply := make(chan RequestVoteReply, rf.all_server_number)
@@ -757,7 +794,6 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 			// current status is not pre-candidate anymore
 			rf.mu.Lock()
 			if rf.status != PRECANDIDATE {
-				rf.status = FOLLOWER
 				rf.mu.Unlock()
 				log.Printf("Server[%d] quit pre vote, not PRECANDIDATE anymore", rf.me)
 				return false
@@ -793,7 +829,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 			return true
 
 		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
-			log.Printf("Server[%d] did not finish pre-vote in time", rf.me)
+			log.Printf("Server[%d] quit pre-vote goroutine", rf.me)
 			return false
 
 		default:
@@ -815,15 +851,13 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 
 	if server != rf.me {
 		rf.mu.Lock()
-		rf.next_index[server] += len(args.ENTRIES)
+		rf.next_index[server] = args.PREV_LOG_INDEX + len(args.ENTRIES) + 1
 		rf.mu.Unlock()
 	}
-	// log.Printf("ready send Server[%d] commit message", server)
 	rf.recently_commit <- ServerCommitIndex{
 		server:       server,
 		commit_index: commit_index,
 	}
-	// log.Printf("send Server[%d] commit message", server)
 }
 
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
@@ -844,12 +878,15 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 
 		reply := &RequestAppendEntryReply{}
 
+		failed_times := 0
 		for reply.SUCCESS == false {
 			rf.sendOneAppendEntry(server, args, reply)
 			if reply.SUCCESS {
 				rf.__successAppend(server, this_round_term, args)
 				continue
 			}
+			failed_times++
+			log.Print("Server[", server, "] failed time: ", failed_times, ", args is ", args)
 
 			// reply is false
 			rf.mu.Lock()
@@ -868,7 +905,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			}
 
 			// log not match
-			log.Print("Server[", rf.me, "] log dismatch, args is ", args)
+			log.Print("Server[", server, "] log dismatch, args is ", args)
 			rf.match_index[server] -= 1
 
 			old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
@@ -876,7 +913,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			args.PREV_LOG_TERM = new_prev_log.TERM
 			args.PREV_LOG_INDEX = new_prev_log.INDEX
 			args.ENTRIES = append(args.ENTRIES, old_prev_log)
-			log.Print("Server[", rf.me, "] log dismatch, new args is ", args)
+			log.Print("Server[", server, "] log dismatch, new args is ", args)
 
 			rf.mu.Unlock()
 		} // end reply false for
@@ -943,19 +980,17 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	term = rf.current_term
 	isLeader = true
-	index = rf.next_index[rf.me]
-	rf.next_index[rf.me] += 1
-
-	go rf.newRoundAppend(command, index)
-
+	index = len(rf.log) + 1
+	rf.next_index[rf.me] = index + 1
 	new_log := Log{
 		INDEX:   index,
 		TERM:    rf.current_term,
 		COMMAND: command,
 	}
 	rf.log = append(rf.log, new_log)
+	go rf.newRoundAppend(command, index)
 
-	log.Printf("Server[%d] Start accept new log", rf.me)
+	log.Print("Server[", rf.me, "] Start accept new log:", new_log)
 
 	return index, term, isLeader
 }
@@ -1036,14 +1071,13 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 //use this function when hold the lock
 func (rf *Raft) becomeLeader() {
 	rf.status = LEADER
+	rf.next_index[rf.me] = len(rf.log)
 
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
-	// FIXME: re-initialize next_index and match_index
 	go rf.sendHeartBeat()
 
 	// FIXME: cause error when become leader twice
-	// FIXME: update next_index
 	go rf.leaderUpdateCommitIndex(rf.current_term)
 
 	for i := 0; i < rf.all_server_number; i++ {
@@ -1091,7 +1125,7 @@ func (rf *Raft) ticker() {
 		}
 
 		if rf.status == PRECANDIDATE {
-			rf.becomeFollower(rf.current_term, -1)
+			rf.becomeFollower(rf.current_term, rf.leader_id)
 			rf.mu.Unlock()
 
 			log.Printf("Server[%d] did not finish pre vote in time, become follower", rf.me)
