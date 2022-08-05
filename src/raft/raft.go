@@ -237,7 +237,7 @@ func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply 
 	return ok
 }
 
-func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
+func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
 	if len(args.ENTRIES) == 0 {
 		log.Printf("Server[%d] send new heartbeat to %d", rf.me, server)
 	}
@@ -247,13 +247,13 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 	for !ok {
 		if failed_times >= 2 {
 			log.Print("Server[", rf.me, "] send append entry failed too many times ", failed_times, " to server ", server, "return")
-			return
+			return false
 		}
 		time.Sleep(time.Duration(interval) * time.Millisecond)
 		rf.mu.Lock()
 		if rf.current_term > args.TERM {
 			rf.mu.Unlock()
-			return
+			return false
 		}
 		rf.mu.Unlock()
 		ok = rf.sendAppendEntry(server, args, reply)
@@ -266,7 +266,7 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 	}
 	log.Printf("Server[%d] send new heartbeat to %d DONE", rf.me, server)
 
-	return
+	return true
 }
 
 func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
@@ -384,9 +384,6 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	// log.Printf("Server[%d] receive Append Entry RPC from server[%d]", rf.me, args.LEADER_ID)
-	// log.Print(args)
-
 	if args.TERM < rf.current_term {
 		log.Printf("Server[%d] reject Append Entry RPC from server[%d]", rf.me, args.LEADER_ID)
 		reply.SUCCESS = false
@@ -408,12 +405,14 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 
 	// log did not match
 	// TODO: may need find a way to speed up this
+	log.Print("Server[", rf.me, "] have log", rf.log)
 	if len(rf.log) > 0 && len(args.ENTRIES) > 0 {
 		matched := false
 		for i := len(rf.log) - 1; i >= 0; i-- {
 			iter_log := &rf.log[i]
 			// log match
 			if args.PREV_LOG_INDEX == iter_log.INDEX && args.PREV_LOG_TERM == iter_log.TERM {
+				log.Printf("Server[%d] match log in position %d", rf.me, i)
 				matched = true
 				// match happen before latest log
 				// TODO: find how dismatch is this
@@ -424,9 +423,13 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 			}
 		}
 		if !matched {
-			reply.SUCCESS = false
-			log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
-			return
+			if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
+				rf.log = make([]Log, 0)
+			} else {
+				reply.SUCCESS = false
+				log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
+				return
+			}
 		}
 	}
 
@@ -889,7 +892,10 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 
 		failed_times := 0
 		for reply.SUCCESS == false {
-			rf.sendOneAppendEntry(server, args, reply)
+			ok := rf.sendOneAppendEntry(server, args, reply)
+			if !ok {
+				break
+			}
 			if reply.SUCCESS {
 				rf.__successAppend(server, this_round_term, args)
 				continue
@@ -916,12 +922,23 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			log.Print("Server[", server, "] log dismatch, args is ", args)
 			rf.match_index[server] -= 1
 
+			if args.PREV_LOG_INDEX == 0 {
+				rf.mu.Unlock()
+				break
+			}
+
 			old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
-			// FIXME: the first log has been wrong
-			new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
-			args.PREV_LOG_TERM = new_prev_log.TERM
-			args.PREV_LOG_INDEX = new_prev_log.INDEX
 			args.ENTRIES = append(args.ENTRIES, old_prev_log)
+
+			// FIXME: here error
+			if args.PREV_LOG_INDEX-2 >= 0 {
+				new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
+				args.PREV_LOG_TERM = new_prev_log.TERM
+				args.PREV_LOG_INDEX = new_prev_log.INDEX
+			} else {
+				args.PREV_LOG_TERM = 0
+				args.PREV_LOG_INDEX = 0
+			}
 			log.Print("Server[", server, "] log dismatch, new args is ", args)
 
 			rf.mu.Unlock()
