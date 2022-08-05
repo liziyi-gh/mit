@@ -241,7 +241,6 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 	if len(args.ENTRIES) == 0 {
 		log.Printf("Server[%d] send new heartbeat to %d", rf.me, server)
 	}
-	log.Printf("Server[%d] ", rf.me)
 	ok := rf.sendAppendEntry(server, args, reply)
 	failed_times := 0
 	interval := 10

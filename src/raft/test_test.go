@@ -320,6 +320,8 @@ func TestFailAgree2B(t *testing.T) {
 	leader := cfg.checkOneLeader()
 	fmt.Printf("leader is %d\n", leader)
 	cfg.disconnect((leader + 1) % servers)
+	current_time := time.Now()
+	fmt.Printf("disconnect server time is %s\n", current_time.Format("2006-01-02 15:04:05.000000"))
 	fmt.Printf("disconnect %d\n", (leader+1)%servers)
 
 	// the leader and remaining follower should be
@@ -336,6 +338,8 @@ func TestFailAgree2B(t *testing.T) {
 
 	// re-connect
 	cfg.connect((leader + 1) % servers)
+	current_time = time.Now()
+	fmt.Printf("reconnect server time is %s\n", current_time.Format("2006-01-02 15:04:05.000000"))
 	fmt.Printf("%d reconnect\n", (leader+1)%servers)
 
 	// the full set of servers should preserve
