@@ -32,14 +32,6 @@ import (
 	"6.824/labrpc"
 )
 
-func Max(x, y int) int {
-    if x > y {
-        return x
-    }
-    return y
-}
-
-
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -261,6 +253,7 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		rf.mu.Unlock()
 		ok = rf.sendAppendEntry(server, args, reply)
 		failed_times++
+		log.Print("Server[", rf.me, "] send append entry failed times ", failed_times, " to server ", server)
 	}
 
 	return
@@ -381,8 +374,8 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	log.Printf("Server[%d] receive Append Entry RPC from server[%d]", rf.me, args.LEADER_ID)
-	log.Print(args)
+	// log.Printf("Server[%d] receive Append Entry RPC from server[%d]", rf.me, args.LEADER_ID)
+	// log.Print(args)
 
 	if args.TERM < rf.current_term {
 		log.Printf("Server[%d] reject Append Entry RPC from server[%d]", rf.me, args.LEADER_ID)
@@ -861,9 +854,11 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 }
 
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
+	defer log.Print("Server[", server, "] quit handleAppendEntryForOneServer")
 
 	for {
 		args := <-rf.append_entry_chan[server]
+		log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
 		rf.mu.Lock()
 		if rf.current_term != this_round_term {
 			rf.mu.Unlock()
@@ -899,7 +894,6 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 
 			// new term case 2, know from peer
 			if reply.TERM > rf.current_term {
-				rf.becomeFollower(reply.TERM, -1)
 				rf.mu.Unlock()
 				return
 			}
