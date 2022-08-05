@@ -98,18 +98,20 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 	//
 	// send the request.
 	//
+	timeout_ms := 10
 	select {
 	case e.ch <- req:
 		// the request has been sent.
 	case <-e.done:
 		// entire Network has been destroyed.
 		return false
+	case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
+		return false
 	}
 
 	//
 	// wait for the reply.
 	//
-	timeout_ms := 10
 	select {
 	case rep := <-req.replyCh:
 		if rep.ok {
