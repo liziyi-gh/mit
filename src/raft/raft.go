@@ -23,6 +23,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -237,6 +238,10 @@ func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply 
 }
 
 func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
+	if len(args.ENTRIES) == 0 {
+		log.Printf("Server[%d] send new heartbeat to %d", rf.me, server)
+	}
+	log.Printf("Server[%d] ", rf.me)
 	ok := rf.sendAppendEntry(server, args, reply)
 	failed_times := 0
 	interval := 10
@@ -254,7 +259,11 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		ok = rf.sendAppendEntry(server, args, reply)
 		failed_times++
 		log.Print("Server[", rf.me, "] send append entry failed times ", failed_times, " to server ", server)
+		if len(args.ENTRIES) == 0 {
+			log.Printf("Server[%d] send new heartbeat to %d", rf.me, server)
+		}
 	}
+	log.Printf("Server[%d] send new heartbeat to %d DONE", rf.me, server)
 
 	return
 }
@@ -386,6 +395,10 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 
 	if !rf.statusIs(FOLLOWER) || rf.leader_id != args.LEADER_ID {
 		log.Printf("Server[%d] accept new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
+	}
+
+	if len(args.ENTRIES) == 0 {
+		log.Printf("Server[%d] receive new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
 	}
 
 	if args.LEADER_ID != rf.me {
@@ -1096,6 +1109,7 @@ func (rf *Raft) ticker() {
 		// log.Printf("Server[%d] ticker: new wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
+		log.Print("Server[", rf.me, "] goroutine number is ", runtime.NumGoroutine())
 
 		rf.mu.Lock()
 
