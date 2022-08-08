@@ -72,6 +72,7 @@ const (
 type ServerCommitIndex struct {
 	server       int
 	commit_index []int
+	term         int
 }
 
 //
@@ -282,6 +283,12 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 			return
 		}
 
+		if new_commit.term < current_term {
+			log.Printf("Server[%d] receive older leader term commit", rf.me)
+			rf.mu.Unlock()
+			continue
+		}
+
 		for _, ele := range new_commit.commit_index {
 			commit_server_num := 0
 
@@ -416,10 +423,20 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 				matched = true
 				// match happen before latest log
 				// TODO: find how dismatch is this
+				// FIXME: NOT DONE!
 				if i < len(rf.log)-1 {
-					rf.log = rf.log[:i+1]
+					self_matched_log_index := i + 1
+					for j := len(args.ENTRIES) - 1; j >= 0; j-- {
+						args_log := &args.ENTRIES[j]
+						self_matched_log := &rf.log[self_matched_log_index]
+						if args_log.TERM != self_matched_log.TERM || args_log.INDEX != self_matched_log.INDEX {
+							rf.log = rf.log[:self_matched_log_index]
+							break
+						}
+						self_matched_log_index += 1
+					}
+					break
 				}
-				break
 			}
 		}
 		if !matched {
@@ -867,6 +884,7 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 	rf.recently_commit <- ServerCommitIndex{
 		server:       server,
 		commit_index: commit_index,
+		term:         this_round_term,
 	}
 }
 
@@ -880,6 +898,12 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		if rf.current_term != this_round_term {
 			rf.mu.Unlock()
 			return
+		}
+
+		if args.TERM != rf.current_term {
+			log.Print("Server[", rf.me, "] receive older Start from upper ")
+			rf.mu.Unlock()
+			continue
 		}
 		rf.mu.Unlock()
 
@@ -930,7 +954,6 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
 			args.ENTRIES = append(args.ENTRIES, old_prev_log)
 
-			// FIXME: here error
 			if args.PREV_LOG_INDEX-2 >= 0 {
 				new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
 				args.PREV_LOG_TERM = new_prev_log.TERM
@@ -1103,14 +1126,11 @@ func (rf *Raft) becomeLeader() {
 	rf.sendOneRoundHeartBeat()
 	go rf.sendHeartBeat()
 
-	// FIXME: cause error when become leader twice
 	go rf.leaderUpdateCommitIndex(rf.current_term)
 
 	for i := 0; i < rf.all_server_number; i++ {
-		// FIXME: cause error when become leader twice
 		go rf.handleAppendEntryForOneServer(i, rf.current_term)
 	}
-
 	log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
 	return
 }
