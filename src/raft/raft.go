@@ -113,10 +113,13 @@ type Raft struct {
 	apply_ch          chan ApplyMsg
 
 	// Convinence constants
-	all_server_number int
-	quorum_number     int
-	timeout_const_ms  int
-	timeout_rand_ms   int
+	all_server_number     int
+	quorum_number         int
+	timeout_const_ms      int
+	timeout_rand_ms       int
+	rpc_retry_times       int
+	rpc_retry_interval_ms int
+	heartbeat_interval_ms int
 }
 
 // return currentTerm and whether this server
@@ -244,13 +247,12 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 	}
 	ok := rf.sendAppendEntry(server, args, reply)
 	failed_times := 0
-	interval := 10
 	for !ok {
-		if failed_times >= 2 {
+		if failed_times >= rf.rpc_retry_times {
 			log.Print("Server[", rf.me, "] send append entry failed too many times ", failed_times, " to server ", server, "return")
 			return false
 		}
-		time.Sleep(time.Duration(interval) * time.Millisecond)
+		time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
 		rf.mu.Lock()
 		if rf.current_term > args.TERM {
 			rf.mu.Unlock()
@@ -259,11 +261,11 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		rf.mu.Unlock()
 		ok = rf.sendAppendEntry(server, args, reply)
 		failed_times++
-		if len(args.ENTRIES) == 0 {
-			log.Print("Server[", rf.me, "] send heartbeat failed times ", failed_times, " to server ", server)
-		} else {
-			log.Print("Server[", rf.me, "] send append entry failed times ", failed_times, " to server ", server)
-		}
+		// if len(args.ENTRIES) == 0 {
+		// 	log.Print("Server[", rf.me, "] send heartbeat failed times ", failed_times, " to server ", server)
+		// } else {
+		// 	log.Print("Server[", rf.me, "] send append entry failed times ", failed_times, " to server ", server)
+		// }
 	}
 	log.Printf("Server[%d] send new heartbeat to %d DONE", rf.me, server)
 
@@ -361,6 +363,11 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 	args.TERM = rf.current_term
 	args.LEADER_ID = rf.me
 	args.LEADER_COMMIT = rf.commit_index
+	if len(rf.log)-1 > 0 {
+		latest_log := &rf.log[len(rf.log)-1]
+		args.PREV_LOG_TERM = latest_log.TERM
+		args.PREV_LOG_INDEX = latest_log.INDEX
+	}
 
 	for i = 0; i < rf.all_server_number; i++ {
 		// don't send heart beat to myself
@@ -372,9 +379,8 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 }
 
 func (rf *Raft) sendHeartBeat() {
-	interval := 100 // ms
 	for {
-		time.Sleep(time.Duration(interval) * time.Millisecond)
+		time.Sleep(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond)
 		rf.mu.Lock()
 		if !rf.statusIs(LEADER) {
 			rf.mu.Unlock()
@@ -430,6 +436,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 						args_log := &args.ENTRIES[j]
 						self_matched_log := &rf.log[self_matched_log_index]
 						if args_log.TERM != self_matched_log.TERM || args_log.INDEX != self_matched_log.INDEX {
+							log.Printf("Server[%d] log dismatched, self_matched_log_index is %d", rf.me, self_matched_log_index)
 							rf.log = rf.log[:self_matched_log_index]
 							break
 						}
@@ -464,6 +471,15 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		log.Print("Server[", rf.me, "] have log", rf.log)
 	}
 
+	// FIXME: prevent heartbeat commit should not commit
+	// if len(args.ENTRIES) == 0 && len(rf.log) > 1 {
+	// 	latest_log := &rf.log[len(rf.log)-1]
+	// 	if args.PREV_LOG_INDEX != latest_log.INDEX || args.PREV_LOG_TERM != latest_log.TERM {
+	// 		log.Print("Server[", rf.me, "] heart beat log dismatch:")
+	// 		reply.SUCCESS = true
+	// 		return
+	// 	}
+	// }
 	rf.updateCommitIndex(args.LEADER_COMMIT)
 
 	return
@@ -625,7 +641,7 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 
 	for {
 		ok := false
-		if failed_times > 10 {
+		if failed_times > rf.rpc_retry_times {
 			return
 		}
 
@@ -644,9 +660,8 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 		ok = rf.sendRequestVote(index, args, reply)
 
 		if !ok {
-			internal := 10
 			failed_times++
-			time.Sleep(time.Duration(internal) * time.Millisecond)
+			time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
 			continue
 		}
 
@@ -684,7 +699,7 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 	for {
 		ok := false
 
-		if failed_times > 10 {
+		if failed_times > rf.rpc_retry_times {
 			return
 		}
 
@@ -704,9 +719,8 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 		ok = rf.sendPreVote(index, args, reply)
 
 		if !ok {
-			internal := 10
 			failed_times++
-			time.Sleep(time.Duration(internal) * time.Millisecond)
+			time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
 			continue
 		}
 
@@ -1241,6 +1255,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.recently_commit = make(chan ServerCommitIndex, rf.all_server_number)
 	rf.append_entry_chan = make([]chan *RequestAppendEntryArgs, rf.all_server_number)
 	rf.apply_ch = applyCh
+	rf.rpc_retry_times = 2
+	rf.rpc_retry_interval_ms = 10
+	rf.heartbeat_interval_ms = 100
 
 	for i := 0; i < rf.all_server_number; i++ {
 		rf.next_index[i] = 1

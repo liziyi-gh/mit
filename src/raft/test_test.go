@@ -518,6 +518,9 @@ func TestRejoin2B(t *testing.T) {
 	// leader network failure
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect(leader1)
+	current_time := time.Now()
+	fmt.Printf("%d reconnect\n", leader1)
+	fmt.Printf("disconnect server time is %s\n", current_time.Format("2006-01-02 15:04:05.000000"))
 
 	// make old leader try to agree on some entries
 	cfg.rafts[leader1].Start(102)
