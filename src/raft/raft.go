@@ -91,7 +91,7 @@ type Raft struct {
 
 	// sync usage
 	receive_from_leader_or_higher_term_peer bool
-	leader_id           int
+	leader_id                               int
 
 	// Persistent on all servers
 	current_term int
@@ -120,6 +120,7 @@ type Raft struct {
 	rpc_retry_times       int
 	rpc_retry_interval_ms int
 	heartbeat_interval_ms int
+	chanel_buffer_size    int
 }
 
 // return currentTerm and whether this server
@@ -1260,8 +1261,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.timeout_rand_ms = 150
 	rf.match_index = make([]int, rf.all_server_number)
 	rf.next_index = make([]int, rf.all_server_number)
+	// FIXME: this is an arbitray number
+	rf.chanel_buffer_size = 1000
 
-	rf.recently_commit = make(chan ServerCommitIndex, rf.all_server_number)
+	rf.recently_commit = make(chan ServerCommitIndex, rf.chanel_buffer_size)
 	rf.append_entry_chan = make([]chan *RequestAppendEntryArgs, rf.all_server_number)
 	rf.apply_ch = applyCh
 	rf.rpc_retry_times = 2
@@ -1270,7 +1273,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	for i := 0; i < rf.all_server_number; i++ {
 		rf.next_index[i] = 1
-		rf.append_entry_chan[i] = make(chan *RequestAppendEntryArgs, rf.all_server_number)
+		// FIXME: this is an arbitray number
+		rf.append_entry_chan[i] = make(chan *RequestAppendEntryArgs, rf.chanel_buffer_size)
 	}
 
 	rf.mu.Unlock()
