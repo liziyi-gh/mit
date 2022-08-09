@@ -23,7 +23,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"runtime"
+	// "runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -90,7 +90,7 @@ type Raft struct {
 	// state a Raft server must maintain.
 
 	// sync usage
-	receive_from_leader bool
+	receive_from_leader_or_higher_term_peer bool
 	leader_id           int
 
 	// Persistent on all servers
@@ -505,7 +505,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// last AppendEntries call was received less than election timeout ago
-	if rf.receive_from_leader {
+	if rf.receive_from_leader_or_higher_term_peer {
 		log.Printf("Server[%d] reject pre vote request from Server[%d], already have leader [%d]", rf.me, args.CANDIDATE_ID, rf.leader_id)
 		return
 	}
@@ -554,8 +554,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.current_term < args.TERM {
 		// NOTE: it would not cause mutilply leaders?
 		// update: of course not! 1 term, 1 server, 1 ticket, fair enough.
-		log.Printf("Server[%d] request vote but they have new term ", rf.me)
-		rf.becomeFollower(args.TERM, -1)
+		log.Printf("Server[%d] quit request vote because server %d have new term ", rf.me, args.CANDIDATE_ID)
+		// rf.becomeFollower(args.TERM, -1)
+		rf.status = FOLLOWER
+		rf.current_term = args.TERM
+		rf.voted_for = -1
+		rf.receive_from_leader_or_higher_term_peer = true
 	}
 
 	// I have voted for other server
@@ -1092,7 +1096,7 @@ func (rf *Raft) statusIs(status int) bool {
 // use this function when hold the lock
 func (rf *Raft) becomePreCandidate() {
 	rf.leader_id = -1
-	rf.receive_from_leader = false
+	rf.receive_from_leader_or_higher_term_peer = false
 	rf.status = PRECANDIDATE
 	log.Printf("Server[%d] become pre-candidate", rf.me)
 	go rf.newPreVote(rf.current_term)
@@ -1128,9 +1132,9 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 	rf.current_term = new_term
 
 	if new_leader != -1 {
-		rf.receive_from_leader = true
+		rf.receive_from_leader_or_higher_term_peer = true
 	} else {
-		rf.receive_from_leader = false
+		rf.receive_from_leader_or_higher_term_peer = false
 	}
 
 	rf.leader_id = new_leader
@@ -1164,10 +1168,10 @@ func (rf *Raft) ticker() {
 		// time.Sleep().
 
 		duration := rand.Intn(rf.timeout_rand_ms) + rf.timeout_const_ms
-		// log.Printf("Server[%d] ticker: new wait time is %d(ms)", rf.me, duration)
+		log.Printf("Server[%d] ticker: new wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
-		log.Print("Server[", rf.me, "] goroutine number is ", runtime.NumGoroutine())
+		// log.Print("Server[", rf.me, "] goroutine number is ", runtime.NumGoroutine())
 
 		rf.mu.Lock()
 
@@ -1178,8 +1182,8 @@ func (rf *Raft) ticker() {
 		}
 
 		// if have a leader
-		if rf.receive_from_leader {
-			rf.receive_from_leader = false
+		if rf.receive_from_leader_or_higher_term_peer {
+			rf.receive_from_leader_or_higher_term_peer = false
 			rf.mu.Unlock()
 			continue
 		}
