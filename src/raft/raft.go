@@ -299,7 +299,6 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 			}
 
 			for j := 0; j < rf.all_server_number; j++ {
-				// FIXME: update next_index! and prevent index n+1 can not commit because n did not count
 				if rf.next_index[j] > ele {
 					commit_server_num += 1
 				}
@@ -354,27 +353,26 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 // use this function with lock
 func (rf *Raft) sendOneRoundHeartBeat() {
 	i := 0
-	args := &RequestAppendEntryArgs{}
+	args := make([]RequestAppendEntryArgs, rf.all_server_number)
 	reply := make([]RequestAppendEntryReply, rf.all_server_number)
 	if !rf.statusIs(LEADER) {
 		return
 	}
 
-	args.TERM = rf.current_term
-	args.LEADER_ID = rf.me
-	args.LEADER_COMMIT = rf.commit_index
-	if len(rf.log)-1 > 0 {
-		latest_log := &rf.log[len(rf.log)-1]
-		args.PREV_LOG_TERM = latest_log.TERM
-		args.PREV_LOG_INDEX = latest_log.INDEX
-	}
-
 	for i = 0; i < rf.all_server_number; i++ {
+		argi := &args[i]
+		argi.TERM = rf.current_term
+		argi.LEADER_ID = rf.me
+		argi.LEADER_COMMIT = rf.commit_index
+		argi.PREV_LOG_INDEX = rf.next_index[i] - 1
+		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= len(rf.log) {
+			argi.PREV_LOG_TERM = rf.log[argi.PREV_LOG_INDEX-1].TERM
+		}
 		// don't send heart beat to myself
-		if i == args.LEADER_ID {
+		if i == args[i].LEADER_ID {
 			continue
 		}
-		go rf.sendOneAppendEntry(i, args, &reply[i])
+		go rf.sendOneAppendEntry(i, argi, &reply[i])
 	}
 }
 
@@ -472,14 +470,21 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	}
 
 	// FIXME: prevent heartbeat commit should not commit
-	// if len(args.ENTRIES) == 0 && len(rf.log) > 1 {
-	// 	latest_log := &rf.log[len(rf.log)-1]
-	// 	if args.PREV_LOG_INDEX != latest_log.INDEX || args.PREV_LOG_TERM != latest_log.TERM {
-	// 		log.Print("Server[", rf.me, "] heart beat log dismatch:")
-	// 		reply.SUCCESS = true
-	// 		return
-	// 	}
-	// }
+	log.Print("Server[", rf.me, "] got heartbeat args:", args)
+	if len(args.ENTRIES) == 0 && len(rf.log) >= 1 {
+		for i := len(rf.log) - 1; i >= 0; i-- {
+			iter_log := &rf.log[len(rf.log)-1]
+			if args.PREV_LOG_INDEX == iter_log.INDEX && args.PREV_LOG_TERM == iter_log.TERM {
+				log.Print("Server[", rf.me, "] going to commit args:", args)
+				log.Print("Server[", rf.me, "] have log", rf.log)
+				if args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
+					rf.updateCommitIndex(args.PREV_LOG_INDEX)
+				}
+				return
+			}
+		}
+		return
+	}
 	rf.updateCommitIndex(args.LEADER_COMMIT)
 
 	return
@@ -960,7 +965,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			log.Print("Server[", server, "] log dismatch, args is ", args)
 			rf.match_index[server] -= 1
 
-			if args.PREV_LOG_INDEX == 0 {
+			if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
 				rf.mu.Unlock()
 				break
 			}
