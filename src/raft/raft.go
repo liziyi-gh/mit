@@ -23,6 +23,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+
 	// "runtime"
 	"sort"
 	"sync"
@@ -415,6 +416,8 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		rf.becomeFollower(args.TERM, args.LEADER_ID)
 	}
 
+	append_log_number := len(args.ENTRIES)
+
 	// log did not match
 	// TODO: may need find a way to speed up this
 	log.Print("Server[", rf.me, "] have log", rf.log)
@@ -427,8 +430,6 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 				log.Printf("Server[%d] match log in position %d", rf.me, i)
 				matched = true
 				// match happen before latest log
-				// TODO: find how dismatch is this
-				// FIXME: NOT DONE!
 				if i < len(rf.log)-1 {
 					self_matched_log_index := i + 1
 					for j := len(args.ENTRIES) - 1; j >= 0; j-- {
@@ -439,7 +440,8 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 							rf.log = rf.log[:self_matched_log_index]
 							break
 						}
-						self_matched_log_index += 1
+						self_matched_log_index++
+						append_log_number--
 					}
 					break
 				}
@@ -463,7 +465,8 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		args.ENTRIES[i], args.ENTRIES[j] = args.ENTRIES[j], args.ENTRIES[i]
 	}
 
-	rf.log = append(rf.log, args.ENTRIES...)
+	// FIXME: how many log need to append
+	rf.log = append(rf.log, args.ENTRIES[:append_log_number]...)
 
 	if len(args.ENTRIES) > 0 {
 		log.Print("Server[", rf.me, "] going to commit args:", args)
