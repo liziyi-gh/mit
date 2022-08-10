@@ -275,9 +275,9 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 }
 
 func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
-	commited := make([]int, 0)
 	for {
 		new_commit := <-rf.recently_commit
+		commited := make([]int, 0)
 		rf.mu.Lock()
 		log.Printf("get new commit")
 		log.Print(new_commit)
@@ -314,18 +314,10 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 		sort.Slice(commited, func(i, j int) bool {
 			return commited[i] < commited[j]
 		})
-		log.Printf("commited is ")
-		log.Print(commited)
-
-		new_commited := make([]int, 0)
-		for _, ele := range commited {
-			if ele == rf.commit_index+1 {
-				rf.updateCommitIndex(ele)
-			} else {
-				new_commited = append(new_commited, ele)
-			}
+		log.Print("leader going to commited is ", commited)
+		if len(commited) > 0 {
+			rf.updateCommitIndex(commited[len(commited)-1])
 		}
-		commited = new_commited
 
 		rf.mu.Unlock()
 	}
@@ -404,14 +396,6 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		return
 	}
 
-	if !rf.statusIs(FOLLOWER) || rf.leader_id != args.LEADER_ID {
-		log.Printf("Server[%d] accept new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
-	}
-
-	if len(args.ENTRIES) == 0 {
-		log.Printf("Server[%d] receive new heart beat from server[%d], at term %d", rf.me, args.LEADER_ID, args.TERM)
-	}
-
 	if args.LEADER_ID != rf.me {
 		rf.becomeFollower(args.TERM, args.LEADER_ID)
 	}
@@ -465,13 +449,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		args.ENTRIES[i], args.ENTRIES[j] = args.ENTRIES[j], args.ENTRIES[i]
 	}
 
-	// FIXME: how many log need to append
 	rf.log = append(rf.log, args.ENTRIES[:append_log_number]...)
-
-	if len(args.ENTRIES) > 0 {
-		log.Print("Server[", rf.me, "] going to commit args:", args)
-		log.Print("Server[", rf.me, "] have log", rf.log)
-	}
 
 	// FIXME: prevent heartbeat commit should not commit
 	log.Print("Server[", rf.me, "] got heartbeat args:", args)
@@ -487,9 +465,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 				return
 			}
 		}
-		return
 	}
-	rf.updateCommitIndex(args.LEADER_COMMIT)
 
 	return
 }
@@ -905,7 +881,11 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 
 	if server != rf.me {
 		rf.mu.Lock()
-		rf.next_index[server] = args.PREV_LOG_INDEX + len(args.ENTRIES) + 1
+		new_next_index := args.PREV_LOG_INDEX + len(args.ENTRIES) + 1
+		if new_next_index > rf.next_index[server] {
+			log.Print("leader update next index for Server[", server,"] , new next index is ", new_next_index)
+			rf.next_index[server] = new_next_index
+		}
 		rf.mu.Unlock()
 	}
 	rf.recently_commit <- ServerCommitIndex{
