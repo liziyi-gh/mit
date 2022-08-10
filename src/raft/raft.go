@@ -883,7 +883,7 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 		rf.mu.Lock()
 		new_next_index := args.PREV_LOG_INDEX + len(args.ENTRIES) + 1
 		if new_next_index > rf.next_index[server] {
-			log.Print("leader update next index for Server[", server,"] , new next index is ", new_next_index)
+			log.Print("leader update next index for Server[", server, "] , new next index is ", new_next_index)
 			rf.next_index[server] = new_next_index
 		}
 		rf.mu.Unlock()
@@ -902,6 +902,12 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		args := <-rf.append_entry_chan[server]
 		log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
 		rf.mu.Lock()
+		// FIXME: reduce rpc number
+		// if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] {
+		// 	log.Print("Server[", rf.me, "] skip args ", args, "because peer already have")
+		// 	rf.mu.Unlock()
+		// 	continue
+		// }
 		if rf.current_term != this_round_term {
 			rf.mu.Unlock()
 			return
