@@ -1,0 +1,50 @@
+Test (2B): basic agreement ...
+  ... Passed --   0.6  3   20    5046    3
+Test (2B): RPC byte count ...
+  ... Passed --   1.4  3   49  113988   11
+Test (2B): agreement after follower reconnects ...
+leader is 1
+disconnect server time is 2022-08-12 16:24:29.652712
+disconnect 2
+102
+103
+104
+105
+reconnect server time is 2022-08-12 16:24:31.001195
+2 reconnect
+106
+107
+  ... Passed --   7.4  3  242   58323    9
+Test (2B): no agreement if too many followers disconnect ...
+  ... Passed --   3.5  5  569   97544    3
+Test (2B): concurrent Start()s ...
+  ... Passed --   0.7  3   23    6428    6
+Test (2B): rejoin of partitioned leader ...
+1 reconnect
+disconnect server time is 2022-08-12 16:24:41.343430
+--- FAIL: TestRejoin2B (11.98s)
+    config.go:609: one(104) failed to reach agreement
+Test (2B): leader backs up quickly over incorrect follower logs ...
+disconnect server  1 2 3
+disconnect server  4 0
+connect server  1 2 3
+disconnect server  1
+disconnect server  0
+disconnect server  1
+disconnect server  2
+disconnect server  3
+disconnect server  4
+connect server  4 0 1
+connect server  0
+connect server  1
+connect server  2
+connect server  3
+connect server  4
+  ... Passed --   4.0  5  909  200017   12
+Test (2B): RPC counts aren't too high ...
+approprate RPCs (9) to elect initial leader
+approprate RPCs (28) for 10 entries
+  ... Passed --   2.2  3   67   19222   12
+FAIL
+exit status 1
+FAIL	6.824/raft	31.760s
