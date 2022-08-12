@@ -406,7 +406,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	append_log_number := len(args.ENTRIES)
 
 	// log did not match
-	// TODO: may need find a way to speed up this
+	// NOTE: may need find a way to speed up this
 	log.Print("Server[", rf.me, "] have log", rf.log)
 	if len(rf.log) > 0 && len(args.ENTRIES) > 0 {
 		matched := false
@@ -465,7 +465,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		log.Print("Server[", rf.me, "] new log is:", rf.log)
 	}
 
-	// FIXME: prevent heartbeat commit should not commit
+	// prevent heartbeat commit some logs that should not commit
 	log.Print("Server[", rf.me, "] got append log args:", args)
 	if len(args.ENTRIES) == 0 && len(rf.log) >= 1 {
 		for i := len(rf.log) - 1; i >= 0; i-- {
@@ -1289,7 +1289,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.timeout_rand_ms = 150
 	rf.match_index = make([]int, rf.all_server_number)
 	rf.next_index = make([]int, rf.all_server_number)
-	// FIXME: this is an arbitray number
+	// NOTE: this is an arbitray number
 	rf.chanel_buffer_size = 1000
 
 	rf.recently_commit = make(chan ServerCommitIndex, rf.chanel_buffer_size)
@@ -1301,7 +1301,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	for i := 0; i < rf.all_server_number; i++ {
 		rf.next_index[i] = 1
-		// FIXME: this is an arbitray number
+		// NOTE: this is an arbitray number
 		rf.append_entry_chan[i] = make(chan *RequestAppendEntryArgs, rf.chanel_buffer_size)
 	}
 
