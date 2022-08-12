@@ -92,7 +92,7 @@ type Raft struct {
 
 	// sync usage
 	receive_from_leader bool
-	leader_id                               int
+	leader_id           int
 
 	// Persistent on all servers
 	current_term int
@@ -926,12 +926,13 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		args := <-rf.append_entry_chan[server]
 		log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
 		rf.mu.Lock()
-		// FIXME: reduce rpc number
-		// if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] {
-		// 	log.Print("Server[", rf.me, "] skip args ", args, "because peer already have")
-		// 	rf.mu.Unlock()
-		// 	continue
-		// }
+		// reduce rpc number
+		if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] {
+			log.Print("Server[", rf.me, "] skip args ", args, "because peer already have")
+			rf.mu.Unlock()
+			continue
+		}
+
 		if rf.current_term != this_round_term {
 			rf.mu.Unlock()
 			return

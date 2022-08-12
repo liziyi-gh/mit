@@ -7,13 +7,13 @@ do
     TESTER_LOG_FILE=/tmp/tmp-fs/tester.${i}.log
     RAFT_LOG_FILE=/tmp/tmp-fs/raft.log
     # go test -run 2A > ${TESTER_LOG_FILE}
-    # go test -run 2B -race > ${TESTER_LOG_FILE}
+    go test -run 2B -race > ${TESTER_LOG_FILE}
     # go test -run TestBasicAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestFailAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestRejoin2B -race > ${TESTER_LOG_FILE}
     # go test -run TestConcurrentStarts2B -race > ${TESTER_LOG_FILE}
     # go test -run TestCount2B -race > ${TESTER_LOG_FILE}
-    go test -run TestBackup2B -race > ${TESTER_LOG_FILE}
+    # go test -run TestBackup2B -race > ${TESTER_LOG_FILE}
 
     tmp=$(grep FAIL ${TESTER_LOG_FILE})
     tmp2=$(grep "DATA RACE" ${TESTER_LOG_FILE})

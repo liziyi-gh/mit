@@ -718,9 +718,9 @@ loop:
 		}
 
 		if total2-total1 > (iters+1+3)*3 {
-			t.Fatalf("too many RPCs (%v) for %v entriesb\n", total2-total1, iters)
+			t.Fatalf("too many RPCs (%v) for %v entries\n", total2-total1, iters)
 		} else {
-			fmt.Printf("approprate RPCs (%v) for %v entriesb\n", total2-total1, iters)
+			fmt.Printf("approprate RPCs (%v) for %v entries\n", total2-total1, iters)
 		}
 
 		success = true
