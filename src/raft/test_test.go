@@ -562,7 +562,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
 	fmt.Println("disconnect server ", (leader1 + 2) % servers, (leader1 + 3) % servers, (leader1 + 4) % servers)
-	alot_of_logs := 5
+	alot_of_logs := 50
 
 	// submit lots of commands that won't commit
 	for i := 0; i < alot_of_logs; i++ {
