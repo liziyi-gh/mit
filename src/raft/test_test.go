@@ -561,9 +561,11 @@ func TestBackup2B(t *testing.T) {
 	cfg.disconnect((leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
+	fmt.Println("disconnect server ", (leader1 + 2) % servers, (leader1 + 3) % servers, (leader1 + 4) % servers)
+	alot_of_logs := 5
 
 	// submit lots of commands that won't commit
-	for i := 0; i < 50; i++ {
+	for i := 0; i < alot_of_logs; i++ {
 		cfg.rafts[leader1].Start(rand.Int())
 	}
 
@@ -571,14 +573,16 @@ func TestBackup2B(t *testing.T) {
 
 	cfg.disconnect((leader1 + 0) % servers)
 	cfg.disconnect((leader1 + 1) % servers)
+	fmt.Println("disconnect server ", (leader1 + 0) % servers, (leader1 + 1) % servers)
 
 	// allow other partition to recover
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
+	fmt.Println("connect server ", (leader1 + 2) % servers, (leader1 + 3) % servers, (leader1 + 4) % servers)
 
 	// lots of successful commands to new group.
-	for i := 0; i < 50; i++ {
+	for i := 0; i < alot_of_logs; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
 
@@ -589,9 +593,10 @@ func TestBackup2B(t *testing.T) {
 		other = (leader2 + 1) % servers
 	}
 	cfg.disconnect(other)
+	fmt.Println("disconnect server ", other)
 
 	// lots more commands that won't commit
-	for i := 0; i < 50; i++ {
+	for i := 0; i < alot_of_logs; i++ {
 		cfg.rafts[leader2].Start(rand.Int())
 	}
 
@@ -600,19 +605,27 @@ func TestBackup2B(t *testing.T) {
 	// bring original leader back to life,
 	for i := 0; i < servers; i++ {
 		cfg.disconnect(i)
+		fmt.Println("disconnect server ", i)
 	}
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
+	fmt.Println("connect server ", (leader1 + 0) % servers, (leader1 + 1) % servers, other)
+	leader3 := cfg.checkOneLeader()
+	if leader3 != other {
+		fmt.Printf("leader3 %d is not equal to other %d\n", leader3, other)
+		cfg.t.Fatal()
+	}
 
 	// lots of successful commands to new group.
-	for i := 0; i < 50; i++ {
+	for i := 0; i < alot_of_logs; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
 
 	// now everyone
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
+		fmt.Println("connect server ", i)
 	}
 	cfg.one(rand.Int(), servers, true)
 
@@ -705,7 +718,9 @@ loop:
 		}
 
 		if total2-total1 > (iters+1+3)*3 {
-			t.Fatalf("too many RPCs (%v) for %v entries\n", total2-total1, iters)
+			t.Fatalf("too many RPCs (%v) for %v entriesb\n", total2-total1, iters)
+		} else {
+			fmt.Printf("approprate RPCs (%v) for %v entriesb\n", total2-total1, iters)
 		}
 
 		success = true

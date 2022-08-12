@@ -114,14 +114,15 @@ type Raft struct {
 	apply_ch          chan ApplyMsg
 
 	// Convinence constants
-	all_server_number     int
-	quorum_number         int
-	timeout_const_ms      int
-	timeout_rand_ms       int
-	rpc_retry_times       int
-	rpc_retry_interval_ms int
-	heartbeat_interval_ms int
-	chanel_buffer_size    int
+	all_server_number      int
+	quorum_number          int
+	timeout_const_ms       int
+	timeout_rand_ms        int
+	rpc_retry_times        int
+	rpc_retry_interval_ms  int
+	heartbeat_interval_ms  int
+	chanel_buffer_size     int
+	enable_feature_prevote bool
 }
 
 // return currentTerm and whether this server
@@ -262,12 +263,14 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		}
 		rf.mu.Unlock()
 		ok = rf.sendAppendEntry(server, args, reply)
+		rf.mu.Lock()
+		if ok {
+			if reply.TERM > rf.current_term {
+				rf.becomeFollower(reply.TERM, -1)
+			}
+		}
+		rf.mu.Unlock()
 		failed_times++
-		// if len(args.ENTRIES) == 0 {
-		// 	log.Print("Server[", rf.me, "] send heartbeat failed times ", failed_times, " to server ", server)
-		// } else {
-		// 	log.Print("Server[", rf.me, "] send append entry failed times ", failed_times, " to server ", server)
-		// }
 	}
 	log.Printf("Server[%d] send new heartbeat to %d DONE", rf.me, server)
 
@@ -442,6 +445,14 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		}
 	}
 
+	if len(args.ENTRIES) > 0 && len(rf.log) == 0 {
+		if args.PREV_LOG_INDEX != 0 || args.PREV_LOG_TERM != 0 {
+			reply.SUCCESS = false
+			log.Print("Server[", rf.me, "] append log to empty failed")
+			return
+		}
+	}
+
 	// rpc call success
 	reply.SUCCESS = true
 
@@ -450,9 +461,12 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	}
 
 	rf.log = append(rf.log, args.ENTRIES[:append_log_number]...)
+	if append_log_number > 0 {
+		log.Print("Server[", rf.me, "] new log is:", rf.log)
+	}
 
 	// FIXME: prevent heartbeat commit should not commit
-	log.Print("Server[", rf.me, "] got heartbeat args:", args)
+	log.Print("Server[", rf.me, "] got append log args:", args)
 	if len(args.ENTRIES) == 0 && len(rf.log) >= 1 {
 		for i := len(rf.log) - 1; i >= 0; i-- {
 			iter_log := &rf.log[len(rf.log)-1]
@@ -478,15 +492,9 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.VOTE_GRANTED = false
 	log.Printf("Server[%d] got pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
-	// caller term less than us
+	// I have newer term
 	if args.TERM < rf.current_term {
 		log.Printf("Server[%d] reject pre vote request from Server[%d], term too low", rf.me, args.CANDIDATE_ID)
-		return
-	}
-
-	// last AppendEntries call was received less than election timeout ago
-	if rf.receive_from_leader_or_higher_term_peer {
-		log.Printf("Server[%d] reject pre vote request from Server[%d], already have leader [%d]", rf.me, args.CANDIDATE_ID, rf.leader_id)
 		return
 	}
 
@@ -505,6 +513,10 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		}
 	}
 
+	// if rf.current_term < args.TERM {
+	// 	rf.becomeFollower(args.TERM, -1)
+	// }
+
 	log.Printf("Server[%d] granted pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
 	reply.VOTE_GRANTED = true
@@ -518,7 +530,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("Server[%d] got vote request from %d", rf.me, args.CANDIDATE_ID)
+	log.Println("Server[", rf.me, "] got vote request args is ", args)
+	log.Println("Server[", rf.me, "] log is ", rf.log)
 
 	reply.VOTE_GRANTED = false
 	reply.TERM = rf.current_term
@@ -534,8 +547,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.current_term < args.TERM {
 		// NOTE: it would not cause mutilply leaders?
 		// update: of course not! 1 term, 1 server, 1 ticket, fair enough.
-		log.Printf("Server[%d] quit request vote because server %d have new term ", rf.me, args.CANDIDATE_ID)
-		// rf.becomeFollower(args.TERM, -1)
 		rf.status = FOLLOWER
 		rf.current_term = args.TERM
 		rf.voted_for = -1
@@ -746,7 +757,15 @@ func (rf *Raft) newVote(this_round_term int) {
 		select {
 		case vote_reply := <-reply:
 			log.Printf("Server[%d] got vote reply, granted is %t", rf.me, vote_reply.VOTE_GRANTED)
+			rf.mu.Lock()
+			if vote_reply.TERM > rf.current_term {
+				rf.becomeCandidate(vote_reply.TERM)
+				rf.mu.Unlock()
+				return
+			}
+
 			if !vote_reply.VOTE_GRANTED {
+				rf.mu.Unlock()
 				continue
 			}
 
@@ -754,7 +773,6 @@ func (rf *Raft) newVote(this_round_term int) {
 			log.Printf("Server[%d] got vote tickets number is %d", rf.me, got_tickets)
 
 			// current status is not candidate anymore
-			rf.mu.Lock()
 			if rf.status != CANDIDATE {
 				rf.mu.Unlock()
 				return
@@ -814,7 +832,14 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 		case pre_vote_reply := <-reply:
 			got_reply += 1
 			log.Printf("Server[%d] got pre vote reply, granted is %t", rf.me, pre_vote_reply.VOTE_GRANTED)
+			rf.mu.Lock()
+			if pre_vote_reply.TERM > rf.current_term {
+				rf.becomePreCandidate()
+				rf.mu.Unlock()
+				return false
+			}
 			if !pre_vote_reply.VOTE_GRANTED {
+				rf.mu.Unlock()
 				continue
 			}
 
@@ -822,7 +847,6 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 			log.Printf("Server[%d] got pre vote tickets number is %d", rf.me, got_tickets)
 
 			// current status is not pre-candidate anymore
-			rf.mu.Lock()
 			if rf.status != PRECANDIDATE {
 				rf.mu.Unlock()
 				log.Printf("Server[%d] quit pre vote, not PRECANDIDATE anymore", rf.me)
@@ -880,6 +904,7 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 	}
 
 	if server != rf.me {
+		// NOTE: is there a problem get lock until now?
 		rf.mu.Lock()
 		new_next_index := args.PREV_LOG_INDEX + len(args.ENTRIES) + 1
 		if new_next_index > rf.next_index[server] {
@@ -1053,6 +1078,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	go rf.newRoundAppend(command, index)
 
 	log.Print("Server[", rf.me, "] Start accept new log:", new_log)
+	log.Print("Server[", rf.me, "] leader have log:", rf.log)
 
 	return index, term, isLeader
 }
@@ -1145,6 +1171,7 @@ func (rf *Raft) becomeLeader() {
 		go rf.handleAppendEntryForOneServer(i, rf.current_term)
 	}
 	log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
+	log.Println("leader log is ", rf.log)
 	return
 }
 
@@ -1179,7 +1206,11 @@ func (rf *Raft) ticker() {
 		}
 
 		if rf.status == FOLLOWER {
-			rf.becomePreCandidate()
+			if rf.enable_feature_prevote {
+				rf.becomePreCandidate()
+			} else {
+				rf.becomeCandidate(rf.current_term + 1)
+			}
 			rf.mu.Unlock()
 			continue
 		}
@@ -1241,6 +1272,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.mu.Lock()
 
+	rf.enable_feature_prevote = false
 	rf.voted_for = -1
 	rf.leader_id = -1
 	rf.status = FOLLOWER
