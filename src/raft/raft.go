@@ -1168,6 +1168,13 @@ func (rf *Raft) becomeLeader() {
 	go rf.leaderUpdateCommitIndex(rf.current_term)
 
 	for i := 0; i < rf.all_server_number; i++ {
+		if i == rf.me {
+			continue
+		}
+		rf.next_index[i] = 1
+	}
+
+	for i := 0; i < rf.all_server_number; i++ {
 		go rf.handleAppendEntryForOneServer(i, rf.current_term)
 	}
 	log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
