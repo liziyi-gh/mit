@@ -91,7 +91,7 @@ type Raft struct {
 	// state a Raft server must maintain.
 
 	// sync usage
-	receive_from_leader_or_higher_term_peer bool
+	receive_from_leader bool
 	leader_id                               int
 
 	// Persistent on all servers
@@ -550,7 +550,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.status = FOLLOWER
 		rf.current_term = args.TERM
 		rf.voted_for = -1
-		rf.receive_from_leader_or_higher_term_peer = true
 	}
 
 	// I have voted for other server
@@ -1112,7 +1111,7 @@ func (rf *Raft) statusIs(status int) bool {
 // use this function when hold the lock
 func (rf *Raft) becomePreCandidate() {
 	rf.leader_id = -1
-	rf.receive_from_leader_or_higher_term_peer = false
+	rf.receive_from_leader = false
 	rf.status = PRECANDIDATE
 	log.Printf("Server[%d] become pre-candidate", rf.me)
 	go rf.newPreVote(rf.current_term)
@@ -1148,9 +1147,9 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 	rf.current_term = new_term
 
 	if new_leader != -1 {
-		rf.receive_from_leader_or_higher_term_peer = true
+		rf.receive_from_leader = true
 	} else {
-		rf.receive_from_leader_or_higher_term_peer = false
+		rf.receive_from_leader = false
 	}
 
 	rf.leader_id = new_leader
@@ -1206,8 +1205,8 @@ func (rf *Raft) ticker() {
 		}
 
 		// if have a leader
-		if rf.receive_from_leader_or_higher_term_peer {
-			rf.receive_from_leader_or_higher_term_peer = false
+		if rf.receive_from_leader {
+			rf.receive_from_leader = false
 			rf.mu.Unlock()
 			continue
 		}
