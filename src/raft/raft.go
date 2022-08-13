@@ -23,7 +23,6 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"reflect"
 
 	// "runtime"
 	"sort"
@@ -520,6 +519,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		}
 	}
 
+	// FIXME:
 	// if rf.current_term < args.TERM {
 	// 	rf.becomeFollower(args.TERM, -1)
 	// }
@@ -965,7 +965,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			ok := rf.sendOneAppendEntry(server, args, reply)
 			rf.mu.Lock()
 			if !ok {
-				// FIXME: break? if no client send new request,
+				// TODO: break? if no client send new request,
 				// the server left behind can not sync
 				rf.mu.Unlock()
 				break
@@ -1075,11 +1075,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	t := reflect.TypeOf(command)
-	if t != reflect.TypeOf(1) {
-		// panic("not int!!!!")
-	}
-	log.Println("type is ", t)
 
 	// is not leader
 	if !rf.statusIs(LEADER) {
@@ -1298,7 +1293,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.mu.Lock()
 
-	rf.enable_feature_prevote = false
+	rf.enable_feature_prevote = true
 	rf.voted_for = -1
 	rf.leader_id = -1
 	rf.status = FOLLOWER
