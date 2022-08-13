@@ -101,33 +101,26 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 	//
 	// send the request.
 	//
-	timeout_ms := 10
 	select {
 	case e.ch <- req:
 		// the request has been sent.
 	case <-e.done:
 		// entire Network has been destroyed.
 		return false
-	case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
-		return false
 	}
 
 	//
 	// wait for the reply.
 	//
-	select {
-	case rep := <-req.replyCh:
-		if rep.ok {
-			rb := bytes.NewBuffer(rep.reply)
-			rd := labgob.NewDecoder(rb)
-			if err := rd.Decode(reply); err != nil {
-				log.Fatalf("ClientEnd.Call(): decode reply: %v\n", err)
-			}
-			return true
-		} else {
-			return false
+	rep := <-req.replyCh
+	if rep.ok {
+		rb := bytes.NewBuffer(rep.reply)
+		rd := labgob.NewDecoder(rb)
+		if err := rd.Decode(reply); err != nil {
+			log.Fatalf("ClientEnd.Call(): decode reply: %v\n", err)
 		}
-	case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
+		return true
+	} else {
 		return false
 	}
 
