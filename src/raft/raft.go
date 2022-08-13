@@ -285,6 +285,9 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 
 func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 	for {
+		if rf.killed() {
+			return
+		}
 		new_commit := <-rf.recently_commit
 		commited := make([]int, 0)
 		rf.mu.Lock()
@@ -381,6 +384,9 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 
 func (rf *Raft) sendHeartBeat() {
 	for {
+		if rf.killed() {
+			return
+		}
 		time.Sleep(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond)
 		rf.mu.Lock()
 		if !rf.statusIs(LEADER) {
@@ -646,6 +652,9 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 	failed_times := 0
 
 	for {
+		if rf.killed() {
+			return
+		}
 		ok := false
 		if failed_times > rf.rpc_retry_times {
 			return
@@ -703,6 +712,9 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 	failed_times := 0
 
 	for {
+		if rf.killed() {
+			return
+		}
 		ok := false
 
 		if failed_times > rf.rpc_retry_times {
@@ -761,6 +773,9 @@ func (rf *Raft) newVote(this_round_term int) {
 	timeout_ms := rf.timeout_const_ms + rf.timeout_rand_ms
 
 	for {
+		if rf.killed() {
+			return
+		}
 		select {
 		case vote_reply := <-reply:
 			log.Printf("Server[%d] got vote reply, granted is %t", rf.me, vote_reply.VOTE_GRANTED)
@@ -929,6 +944,9 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 	defer log.Print("Server[", server, "] quit handleAppendEntryForOneServer")
 
 	for {
+		if rf.killed() {
+			return
+		}
 		args := <-rf.append_entry_chan[server]
 		log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
 		rf.mu.Lock()
@@ -1205,6 +1223,10 @@ func (rf *Raft) ticker() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
+
+		if rf.killed() {
+			return
+		}
 
 		duration := rand.Intn(rf.timeout_rand_ms) + rf.timeout_const_ms
 		log.Printf("Server[%d] ticker: new wait time is %d(ms)", rf.me, duration)
