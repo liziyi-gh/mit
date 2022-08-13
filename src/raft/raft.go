@@ -519,6 +519,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		}
 	}
 
+	reply.VOTE_GRANTED = true
 	// FIXME:
 	// if rf.current_term < args.TERM {
 	// 	rf.becomeFollower(args.TERM, -1)
@@ -526,7 +527,6 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	log.Printf("Server[%d] granted pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
-	reply.VOTE_GRANTED = true
 	return
 }
 
@@ -706,6 +706,7 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 		ok := false
 
 		if failed_times > rf.rpc_retry_times {
+			log.Printf("Server[%d] requestOneServerPreVote failed too many times", rf.me)
 			return
 		}
 
@@ -1309,7 +1310,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.recently_commit = make(chan ServerCommitIndex, rf.chanel_buffer_size)
 	rf.append_entry_chan = make([]chan *RequestAppendEntryArgs, rf.all_server_number)
 	rf.apply_ch = applyCh
-	rf.rpc_retry_times = 2
+	rf.rpc_retry_times = 5
 	rf.rpc_retry_interval_ms = 10
 	rf.heartbeat_interval_ms = 100
 
