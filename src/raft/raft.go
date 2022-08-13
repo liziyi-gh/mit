@@ -23,6 +23,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"reflect"
 
 	// "runtime"
 	"sort"
@@ -246,7 +247,7 @@ func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply 
 
 func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
 	if len(args.ENTRIES) == 0 {
-		log.Printf("Server[%d] send new heartbeat to %d", rf.me, server)
+		log.Printf("Server[%d] send new append entry RPC to %d", rf.me, server)
 	}
 	ok := rf.sendAppendEntry(server, args, reply)
 	failed_times := 0
@@ -272,7 +273,7 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		rf.mu.Unlock()
 		failed_times++
 	}
-	log.Printf("Server[%d] send new heartbeat to %d DONE", rf.me, server)
+	log.Printf("Server[%d] send new append entry RPC to %d DONE", rf.me, server)
 
 	return true
 }
@@ -895,6 +896,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 
 }
 
+// use this function when hold lock
 func (rf *Raft) __successAppend(server int, this_round_term int,
 	args *RequestAppendEntryArgs) {
 	commit_index := make([]int, len(args.ENTRIES))
@@ -903,14 +905,11 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 	}
 
 	if server != rf.me {
-		// NOTE: is there a problem get lock until now?
-		rf.mu.Lock()
 		new_next_index := args.PREV_LOG_INDEX + len(args.ENTRIES) + 1
 		if new_next_index > rf.next_index[server] {
 			log.Print("leader update next index for Server[", server, "] , new next index is ", new_next_index)
 			rf.next_index[server] = new_next_index
 		}
-		rf.mu.Unlock()
 	}
 	rf.recently_commit <- ServerCommitIndex{
 		server:       server,
@@ -927,15 +926,17 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
 		rf.mu.Lock()
 		// reduce rpc number
+		log.Print("rf.next_index is ", rf.next_index)
 		if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] {
-			log.Print("Server[", rf.me, "] skip args ", args, "because peer already have")
+			// NOTE: why here cause problem? should promise next_index would not update by mistake,
+			// so should promise update next_index in right term
+			log.Print("Server[", rf.me, "] skip args ", args, "because peer ", server, " already have")
 			rf.mu.Unlock()
 			continue
 		}
 
 		if rf.current_term != this_round_term {
-			rf.mu.Unlock()
-			return
+			goto end
 		}
 
 		if args.TERM != rf.current_term {
@@ -943,41 +944,45 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			rf.mu.Unlock()
 			continue
 		}
-		rf.mu.Unlock()
 
 		if server == rf.me {
 			rf.__successAppend(server, this_round_term, args)
+			rf.mu.Unlock()
 			continue
 		}
+		rf.mu.Unlock()
 
 		reply := &RequestAppendEntryReply{}
 
 		failed_times := 0
 		for reply.SUCCESS == false {
 			ok := rf.sendOneAppendEntry(server, args, reply)
+			rf.mu.Lock()
 			if !ok {
+				// FIXME: break? if no client send new request,
+				// the server left behind can not sync
+				rf.mu.Unlock()
 				break
 			}
+
+			// new term case 1, update term by other way
+			if this_round_term != rf.current_term {
+				goto end
+			}
+
 			if reply.SUCCESS {
 				rf.__successAppend(server, this_round_term, args)
-				continue
+				rf.mu.Unlock()
+				break
 			}
+
+			// reply is false
 			failed_times++
 			log.Print("Server[", server, "] failed time: ", failed_times, ", args is ", args)
 
-			// reply is false
-			rf.mu.Lock()
-
-			// new term case 1
-			if this_round_term != rf.current_term {
-				rf.mu.Unlock()
-				return
-			}
-
 			// new term case 2, know from peer
 			if reply.TERM > rf.current_term {
-				rf.mu.Unlock()
-				return
+				goto end
 			}
 
 			// log not match
@@ -1005,6 +1010,10 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			rf.mu.Unlock()
 		} // end reply false for
 	}
+
+end:
+	rf.mu.Unlock()
+	return
 
 }
 
@@ -1060,6 +1069,11 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	t := reflect.TypeOf(command)
+	if t != reflect.TypeOf(1) {
+		panic("not int!!!!")
+	}
+	log.Println("type is ", t)
 
 	// is not leader
 	if !rf.statusIs(LEADER) {
@@ -1168,10 +1182,9 @@ func (rf *Raft) becomeLeader() {
 	go rf.leaderUpdateCommitIndex(rf.current_term)
 
 	for i := 0; i < rf.all_server_number; i++ {
-		if i == rf.me {
-			continue
+		if i != rf.me {
+			rf.next_index[i] = 1
 		}
-		rf.next_index[i] = 1
 	}
 
 	for i := 0; i < rf.all_server_number; i++ {

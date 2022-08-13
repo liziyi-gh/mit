@@ -518,9 +518,7 @@ func TestRejoin2B(t *testing.T) {
 	// leader network failure
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect(leader1)
-	current_time := time.Now()
-	fmt.Printf("%d reconnect\n", leader1)
-	fmt.Printf("disconnect server time is %s\n", current_time.Format("2006-01-02 15:04:05.000000"))
+	fmt.Printf("disconnect server %d, time is %s\n", leader1, time.Now().Format("2006-01-02 15:04:05.000000"))
 
 	// make old leader try to agree on some entries
 	cfg.rafts[leader1].Start(102)
@@ -533,14 +531,17 @@ func TestRejoin2B(t *testing.T) {
 	// new leader network failure
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect(leader2)
+	fmt.Printf("disconnect server %d, time is %s\n", leader2, time.Now().Format("2006-01-02 15:04:05.000000"))
 
 	// old leader connected again
 	cfg.connect(leader1)
+	fmt.Printf("reconnect server %d, time is %s\n", leader1, time.Now().Format("2006-01-02 15:04:05.000000"))
 
 	cfg.one(104, 2, true)
 
 	// all together now
 	cfg.connect(leader2)
+	fmt.Printf("reconnect server %d, time is %s\n", leader2, time.Now().Format("2006-01-02 15:04:05.000000"))
 
 	cfg.one(105, servers, true)
 
@@ -561,7 +562,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.disconnect((leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
-	fmt.Println("disconnect server ", (leader1 + 2) % servers, (leader1 + 3) % servers, (leader1 + 4) % servers)
+	fmt.Println("disconnect server ", (leader1+2)%servers, (leader1+3)%servers, (leader1+4)%servers)
 	alot_of_logs := 50
 
 	// submit lots of commands that won't commit
@@ -573,13 +574,13 @@ func TestBackup2B(t *testing.T) {
 
 	cfg.disconnect((leader1 + 0) % servers)
 	cfg.disconnect((leader1 + 1) % servers)
-	fmt.Println("disconnect server ", (leader1 + 0) % servers, (leader1 + 1) % servers)
+	fmt.Println("disconnect server ", (leader1+0)%servers, (leader1+1)%servers)
 
 	// allow other partition to recover
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
-	fmt.Println("connect server ", (leader1 + 2) % servers, (leader1 + 3) % servers, (leader1 + 4) % servers)
+	fmt.Println("connect server ", (leader1+2)%servers, (leader1+3)%servers, (leader1+4)%servers)
 
 	// lots of successful commands to new group.
 	for i := 0; i < alot_of_logs; i++ {
@@ -610,7 +611,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
-	fmt.Println("connect server ", (leader1 + 0) % servers, (leader1 + 1) % servers, other)
+	fmt.Println("connect server ", (leader1+0)%servers, (leader1+1)%servers, other)
 	leader3 := cfg.checkOneLeader()
 	if leader3 != other {
 		fmt.Printf("leader3 %d is not equal to other %d\n", leader3, other)
