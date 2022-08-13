@@ -520,7 +520,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	reply.VOTE_GRANTED = true
-	// FIXME:
+	// FIXME: should become follower?
 	// if rf.current_term < args.TERM {
 	// 	rf.becomeFollower(args.TERM, -1)
 	// }
