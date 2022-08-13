@@ -126,6 +126,12 @@ type Raft struct {
 	enable_feature_prevote bool
 }
 
+// use this function with lock
+func (rf *Raft) SetTerm(new_term int) bool {
+	rf.current_term = new_term
+	return true
+}
+
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
@@ -927,7 +933,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		rf.mu.Lock()
 		// reduce rpc number
 		log.Print("rf.next_index is ", rf.next_index)
-		if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] {
+		if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] && rf.me != server {
 			// NOTE: why here cause problem? should promise next_index would not update by mistake,
 			// so should promise update next_index in right term
 			log.Print("Server[", rf.me, "] skip args ", args, "because peer ", server, " already have")
@@ -1071,7 +1077,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	defer rf.mu.Unlock()
 	t := reflect.TypeOf(command)
 	if t != reflect.TypeOf(1) {
-		panic("not int!!!!")
+		// panic("not int!!!!")
 	}
 	log.Println("type is ", t)
 
