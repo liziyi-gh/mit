@@ -286,6 +286,7 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 	for {
 		if rf.killed() {
+			log.Printf("one gorountine DONE")
 			return
 		}
 		new_commit := <-rf.recently_commit
@@ -385,6 +386,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 func (rf *Raft) sendHeartBeat() {
 	for {
 		if rf.killed() {
+			log.Printf("one gorountine DONE")
 			return
 		}
 		time.Sleep(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond)
@@ -653,6 +655,7 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 
 	for {
 		if rf.killed() {
+			log.Printf("one gorountine DONE")
 			return
 		}
 		ok := false
@@ -713,6 +716,7 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 
 	for {
 		if rf.killed() {
+			log.Printf("one gorountine DONE")
 			return
 		}
 		ok := false
@@ -774,6 +778,7 @@ func (rf *Raft) newVote(this_round_term int) {
 
 	for {
 		if rf.killed() {
+			log.Printf("one gorountine DONE")
 			return
 		}
 		select {
@@ -850,13 +855,17 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 	timeout_ms := rf.timeout_const_ms + rf.timeout_rand_ms
 
 	for {
+		if rf.killed() {
+			log.Printf("one gorountine DONE")
+			return false
+		}
 		select {
 		case pre_vote_reply := <-reply:
 			got_reply += 1
 			log.Printf("Server[%d] got pre vote reply, granted is %t", rf.me, pre_vote_reply.VOTE_GRANTED)
 			rf.mu.Lock()
 			if pre_vote_reply.TERM > rf.current_term {
-				rf.becomePreCandidate()
+				rf.becomeFollower(pre_vote_reply.TERM, -1)
 				rf.mu.Unlock()
 				return false
 			}
@@ -945,6 +954,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 
 	for {
 		if rf.killed() {
+			log.Printf("one gorountine DONE")
 			return
 		}
 		args := <-rf.append_entry_chan[server]
@@ -1131,6 +1141,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+	log.Printf("Kill one Raft server")
 }
 
 func (rf *Raft) killed() bool {
