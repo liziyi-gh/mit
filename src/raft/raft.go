@@ -261,7 +261,6 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 			log.Print("Server[", rf.me, "] send append entry failed too many times ", failed_times, " to server ", server, "return")
 			return false
 		}
-		time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
 		rf.mu.Lock()
 		if rf.current_term > args.TERM {
 			rf.mu.Unlock()
@@ -277,6 +276,7 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		}
 		rf.mu.Unlock()
 		failed_times++
+		time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
 	}
 	log.Printf("Server[%d] send new append entry RPC to %d DONE", rf.me, server)
 
