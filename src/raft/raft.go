@@ -125,9 +125,17 @@ type Raft struct {
 	enable_feature_prevote bool
 }
 
+const None = -1
+
 // use this function with lock
 func (rf *Raft) SetTerm(new_term int) bool {
 	rf.current_term = new_term
+	return true
+}
+
+// use this function with lock
+func (rf *Raft) SetVotefor(vote_for int) bool {
+	rf.voted_for = vote_for
 	return true
 }
 
@@ -271,7 +279,7 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		rf.mu.Lock()
 		if ok {
 			if reply.TERM > rf.current_term {
-				rf.becomeFollower(reply.TERM, -1)
+				rf.becomeFollower(reply.TERM, None)
 			}
 		}
 		rf.mu.Unlock()
@@ -438,6 +446,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 						self_matched_log := &rf.log[self_matched_log_index]
 						if args_log.TERM != self_matched_log.TERM || args_log.INDEX != self_matched_log.INDEX {
 							log.Printf("Server[%d] log dismatched, self_matched_log_index is %d", rf.me, self_matched_log_index)
+							// FIXME:
 							rf.log = rf.log[:self_matched_log_index]
 							break
 						}
@@ -450,6 +459,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		}
 		if !matched {
 			if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
+				// FIXME:
 				rf.log = make([]Log, 0)
 			} else {
 				reply.SUCCESS = false
@@ -474,6 +484,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		args.ENTRIES[i], args.ENTRIES[j] = args.ENTRIES[j], args.ENTRIES[i]
 	}
 
+	// FIXME:
 	rf.log = append(rf.log, args.ENTRIES[:append_log_number]...)
 	if append_log_number > 0 {
 		log.Print("Server[", rf.me, "] new log is:", rf.log)
@@ -530,7 +541,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.VOTE_GRANTED = true
 	// FIXME: should become follower?
 	// if rf.current_term < args.TERM {
-	// 	rf.becomeFollower(args.TERM, -1)
+	// 	rf.becomeFollower(args.TERM, None)
 	// }
 
 	log.Printf("Server[%d] granted pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
@@ -564,7 +575,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// update: of course not! 1 term, 1 server, 1 ticket, fair enough.
 		rf.status = FOLLOWER
 		rf.SetTerm(args.TERM)
-		rf.voted_for = -1
+		rf.SetVotefor(None)
 	}
 
 	// I have voted for other server
@@ -592,8 +603,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// I can voted candidate now
 	log.Printf("Server[%d] vote for Server[%d], at term %d", rf.me, args.CANDIDATE_ID, rf.current_term)
 	reply.VOTE_GRANTED = true
-	rf.voted_for = args.CANDIDATE_ID
 	rf.SetTerm(args.TERM)
+	rf.SetVotefor(args.CANDIDATE_ID)
 }
 
 //
@@ -1111,6 +1122,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		TERM:    rf.current_term,
 		COMMAND: command,
 	}
+	// FIXME:
 	rf.log = append(rf.log, new_log)
 	go rf.newRoundAppend(command, index)
 
@@ -1149,7 +1161,7 @@ func (rf *Raft) statusIs(status int) bool {
 
 // use this function when hold the lock
 func (rf *Raft) becomePreCandidate() {
-	rf.leader_id = -1
+	rf.leader_id = None
 	rf.receive_from_leader = false
 	rf.status = PRECANDIDATE
 	log.Printf("Server[%d] become pre-candidate", rf.me)
@@ -1162,8 +1174,8 @@ func (rf *Raft) becomeCandidate(new_term int) {
 		log.Printf("Server[%d] Error: becomeCandidate in same term", rf.me)
 		return
 	}
-	rf.voted_for = -1
 	rf.SetTerm(new_term)
+	rf.SetVotefor(None)
 	rf.status = CANDIDATE
 	log.Printf("Server[%d] become candidate", rf.me)
 	go rf.newVote(rf.current_term)
@@ -1180,10 +1192,11 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 	}
 	rf.status = FOLLOWER
 
-	if rf.current_term < new_term {
-		rf.voted_for = -1
-	}
 	rf.SetTerm(new_term)
+
+	if rf.current_term < new_term {
+		rf.SetVotefor(None)
+	}
 
 	if new_leader != -1 {
 		rf.receive_from_leader = true
@@ -1321,8 +1334,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.mu.Lock()
 
 	rf.enable_feature_prevote = true
-	rf.voted_for = -1
-	rf.leader_id = -1
+	rf.voted_for = None
+	rf.leader_id = None
 	rf.status = FOLLOWER
 	rf.all_server_number = len(rf.peers)
 	rf.quorum_number = (rf.all_server_number + 1) / 2
