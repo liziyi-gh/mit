@@ -563,7 +563,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// NOTE: it would not cause mutilply leaders?
 		// update: of course not! 1 term, 1 server, 1 ticket, fair enough.
 		rf.status = FOLLOWER
-		rf.current_term = args.TERM
+		rf.SetTerm(args.TERM)
 		rf.voted_for = -1
 	}
 
@@ -593,7 +593,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	log.Printf("Server[%d] vote for Server[%d], at term %d", rf.me, args.CANDIDATE_ID, rf.current_term)
 	reply.VOTE_GRANTED = true
 	rf.voted_for = args.CANDIDATE_ID
-	rf.current_term = args.TERM
+	rf.SetTerm(args.TERM)
 }
 
 //
@@ -1163,7 +1163,7 @@ func (rf *Raft) becomeCandidate(new_term int) {
 		return
 	}
 	rf.voted_for = -1
-	rf.current_term = new_term
+	rf.SetTerm(new_term)
 	rf.status = CANDIDATE
 	log.Printf("Server[%d] become candidate", rf.me)
 	go rf.newVote(rf.current_term)
@@ -1183,7 +1183,7 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 	if rf.current_term < new_term {
 		rf.voted_for = -1
 	}
-	rf.current_term = new_term
+	rf.SetTerm(new_term)
 
 	if new_leader != -1 {
 		rf.receive_from_leader = true
