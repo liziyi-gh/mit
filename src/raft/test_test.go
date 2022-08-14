@@ -809,6 +809,28 @@ func TestGoroutineLeak1LZYA(t *testing.T) {
 	cfg.end()
 }
 
+func TestUnreliableNetworkLZY(t *testing.T) {
+	servers := 3
+	cfg := make_config(t, servers, true, false)
+	defer cfg.cleanup()
+	cfg.begin("Test (2B): test gorountine number")
+
+	var wg sync.WaitGroup
+
+	for iters := 1; iters < 50; iters++ {
+		for j := 0; j < 4; j++ {
+			wg.Add(1)
+			go func(iters, j int) {
+				defer wg.Done()
+				cfg.one((100*iters)+j, 1, true)
+			}(iters, j)
+		}
+		cfg.one(iters, 1, true)
+	}
+
+	cfg.end()
+}
+
 func TestPersist12C(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
