@@ -825,9 +825,6 @@ func (rf *Raft) newVote(this_round_term int) {
 		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
 			log.Printf("Server[%d] did not finish vote in time", rf.me)
 			return
-
-		default:
-			time.Sleep(time.Duration(10) * time.Millisecond)
 		}
 	}
 
@@ -856,7 +853,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 
 	for {
 		if rf.killed() {
-			log.Printf("one gorountine DONE")
+			log.Printf("newPreVote gorountine DONE")
 			return false
 		}
 		select {
@@ -916,10 +913,6 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
 			log.Printf("Server[%d] quit pre-vote goroutine", rf.me)
 			return false
-
-		default:
-			time.Sleep(time.Duration(10) * time.Millisecond)
-
 		}
 	}
 
@@ -1343,7 +1336,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.recently_commit = make(chan ServerCommitIndex, rf.chanel_buffer_size)
 	rf.append_entry_chan = make([]chan *RequestAppendEntryArgs, rf.all_server_number)
 	rf.apply_ch = applyCh
-	rf.rpc_retry_times = 5
+	rf.rpc_retry_times = 1
 	rf.rpc_retry_interval_ms = 10
 	rf.heartbeat_interval_ms = 100
 

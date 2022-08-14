@@ -102,6 +102,7 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 	// send the request.
 	//
 	select {
+	// NOTE: is here really not get block?
 	case e.ch <- req:
 		// the request has been sent.
 	case <-e.done:
