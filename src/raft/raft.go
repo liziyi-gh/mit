@@ -481,8 +481,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		}
 		if !matched {
 			if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
-				// FIXME:
-				rf.log = make([]Log, 0)
+				rf.SliceLog(0)
 			} else {
 				reply.SUCCESS = false
 				log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
@@ -561,8 +560,8 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	reply.VOTE_GRANTED = true
-	if rf.current_term < args.TERM - 1 {
-		rf.becomeFollower(args.TERM - 1, None)
+	if rf.current_term < args.TERM-1 {
+		rf.becomeFollower(args.TERM-1, None)
 	}
 
 	log.Printf("Server[%d] granted pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
