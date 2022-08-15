@@ -157,6 +157,11 @@ func (rf *Raft) SliceLog(last_log_index int) bool {
 	return true
 }
 
+// use this function with lock
+func (rf *Raft) PrintStatus() {
+	log.Printf("Server[%d] status is %d, term is %d, vote for is %d", rf.me, rf.status, rf.current_term, rf.voted_for)
+}
+
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
@@ -528,6 +533,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	rf.PrintStatus()
 
 	reply.TERM = rf.current_term
 	reply.VOTE_GRANTED = false
@@ -573,7 +579,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	log.Println("Server[", rf.me, "] got vote request args is ", args)
-	log.Println("Server[", rf.me, "] log is ", rf.log)
+	rf.PrintStatus()
 
 	reply.VOTE_GRANTED = false
 	reply.TERM = rf.current_term
