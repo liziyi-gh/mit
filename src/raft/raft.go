@@ -480,7 +480,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	append_log_number := len(args.ENTRIES)
 
 	// log did not match
-	// NOTE: may need find a way to speed up this
+	// FIXME: may need find a way to speed up this
 	log.Print("Server[", rf.me, "] have log", rf.log)
 	if len(rf.log) > 0 && len(args.ENTRIES) > 0 {
 		matched := false
