@@ -18,19 +18,18 @@ package raft
 //
 
 import (
-	//	"bytes"
+	"bytes"
 
 	"log"
 	"math/rand"
 	"os"
 
-	// "runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	//	"6.824/labgob"
+	"6.824/labgob"
 	"6.824/labrpc"
 )
 
@@ -69,6 +68,8 @@ const (
 	CANDIDATE
 	LEADER
 )
+
+const None = -1
 
 type ServerCommitIndex struct {
 	server       int
@@ -125,35 +126,42 @@ type Raft struct {
 	enable_feature_prevote bool
 }
 
-const None = -1
+type RaftPersistent struct {
+	current_term int
+}
 
 // use this function with lock
 func (rf *Raft) SetTerm(new_term int) bool {
 	rf.current_term = new_term
+	rf.persist()
 	return true
 }
 
 // use this function with lock
 func (rf *Raft) SetVotefor(vote_for int) bool {
 	rf.voted_for = vote_for
+	rf.persist()
 	return true
 }
 
 // use this function with lock
 func (rf *Raft) AppendLog(new_log *Log) bool {
 	rf.log = append(rf.log, *new_log)
+	rf.persist()
 	return true
 }
 
 // use this function with lock
 func (rf *Raft) AppendLogs(logs []Log) bool {
 	rf.log = append(rf.log, logs...)
+	rf.persist()
 	return true
 }
 
 // use this function with lock
 func (rf *Raft) SliceLog(last_log_index int) bool {
 	rf.log = rf.log[:last_log_index]
+	rf.persist()
 	return true
 }
 
@@ -196,6 +204,13 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.current_term)
+	e.Encode(rf.voted_for)
+	e.Encode(rf.log)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -218,6 +233,20 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var current_term int
+	var vote_for int
+	logs := make([]Log, 0)
+	if d.Decode(&current_term) != nil ||
+		d.Decode(&vote_for) != nil ||
+		d.Decode(&logs) != nil {
+		log.Printf("read persistent error\n")
+	} else {
+		rf.current_term = current_term
+		rf.voted_for = vote_for
+		rf.log = logs
+	}
 }
 
 //
