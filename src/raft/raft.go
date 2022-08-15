@@ -139,6 +139,24 @@ func (rf *Raft) SetVotefor(vote_for int) bool {
 	return true
 }
 
+// use this function with lock
+func (rf *Raft) AppendLog(new_log *Log) bool {
+	rf.log = append(rf.log, *new_log)
+	return true
+}
+
+// use this function with lock
+func (rf *Raft) AppendLogs(logs []Log) bool {
+	rf.log = append(rf.log, logs...)
+	return true
+}
+
+// use this function with lock
+func (rf *Raft) SliceLog(last_log_index int) bool {
+	rf.log = rf.log[:last_log_index]
+	return true
+}
+
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
@@ -446,8 +464,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 						self_matched_log := &rf.log[self_matched_log_index]
 						if args_log.TERM != self_matched_log.TERM || args_log.INDEX != self_matched_log.INDEX {
 							log.Printf("Server[%d] log dismatched, self_matched_log_index is %d", rf.me, self_matched_log_index)
-							// FIXME:
-							rf.log = rf.log[:self_matched_log_index]
+							rf.SliceLog(self_matched_log_index)
 							break
 						}
 						self_matched_log_index++
@@ -484,8 +501,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		args.ENTRIES[i], args.ENTRIES[j] = args.ENTRIES[j], args.ENTRIES[i]
 	}
 
-	// FIXME:
-	rf.log = append(rf.log, args.ENTRIES[:append_log_number]...)
+	rf.AppendLogs(args.ENTRIES[:append_log_number])
 	if append_log_number > 0 {
 		log.Print("Server[", rf.me, "] new log is:", rf.log)
 	}
@@ -1122,8 +1138,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		TERM:    rf.current_term,
 		COMMAND: command,
 	}
-	// FIXME:
-	rf.log = append(rf.log, new_log)
+	rf.AppendLog(&new_log)
 	go rf.newRoundAppend(command, index)
 
 	log.Print("Server[", rf.me, "] Start accept new log:", new_log)
