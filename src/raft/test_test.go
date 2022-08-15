@@ -53,6 +53,63 @@ func TestInitialElection2A(t *testing.T) {
 	cfg.end()
 }
 
+func TestOnlyOneElectionLZY(t *testing.T) {
+	servers := 3
+	cfg := make_config(t, servers, false, false)
+	defer cfg.cleanup()
+
+	cfg.begin("Test (2A): TestOnlyOneElection")
+
+	// is a leader elected?
+	leader1 := cfg.checkOneLeader()
+	cfg.one(101, servers-1, false)
+
+	server2 := (leader1 + 1) % servers
+	server3 := (leader1 + 2) % servers
+	cfg.disconnect(server2)
+	cfg.disconnect(server3)
+
+	alot_of_logs := 2
+
+	// submit lots of commands that won't commit
+	for i := 0; i < alot_of_logs; i++ {
+		cfg.rafts[leader1].Start(rand.Int())
+	}
+
+	time.Sleep(RaftElectionTimeout / 2)
+
+	cfg.disconnect(leader1)
+
+	cfg.connect(server2)
+	cfg.connect(server3)
+	for i := 0; i < alot_of_logs; i++ {
+		cfg.one(rand.Int(), 2, true)
+	}
+
+	leader2 := cfg.checkOneLeader()
+	other := server2
+	if leader2 == server2 {
+		other = server3
+	}
+
+	cfg.disconnect(other)
+
+	for i := 0; i < alot_of_logs; i++ {
+		cfg.rafts[leader2].Start(rand.Int())
+	}
+
+	cfg.disconnect(leader2)
+	cfg.connect(leader1)
+	cfg.connect(other)
+	leader3 := cfg.checkOneLeader()
+
+	if leader3 != other {
+		t.Fatalf("wrong leader", )
+	}
+
+	cfg.end()
+}
+
 func TestReElection2A(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)

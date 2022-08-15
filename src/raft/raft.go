@@ -561,10 +561,9 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	reply.VOTE_GRANTED = true
-	// FIXME: should become follower? if uncomment can not pass test???
-	// if rf.current_term < args.TERM {
-	// 	rf.becomeFollower(args.TERM, None)
-	// }
+	if rf.current_term < args.TERM - 1 {
+		rf.becomeFollower(args.TERM - 1, None)
+	}
 
 	log.Printf("Server[%d] granted pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
