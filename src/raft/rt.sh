@@ -7,7 +7,8 @@ do
     TESTER_LOG_FILE=/tmp/tmp-fs/tester.${i}.log
     RAFT_LOG_FILE=/tmp/tmp-fs/raft.log
     # go test -run 2A > ${TESTER_LOG_FILE}
-    go test -run 2B -race > ${TESTER_LOG_FILE}
+    go test -run TestOnlyOneElectionLZY -race > ${TESTER_LOG_FILE}
+    # go test -run 2B > ${TESTER_LOG_FILE}
     # go test -run TestBasicAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestFailAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestRejoin2B -race > ${TESTER_LOG_FILE}
