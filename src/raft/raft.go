@@ -561,7 +561,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	reply.VOTE_GRANTED = true
-	// FIXME: should become follower?
+	// FIXME: should become follower? if uncomment can not pass test???
 	// if rf.current_term < args.TERM {
 	// 	rf.becomeFollower(args.TERM, None)
 	// }
@@ -1213,9 +1213,11 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 	}
 	rf.status = FOLLOWER
 
+	prev_term := rf.current_term
+
 	rf.SetTerm(new_term)
 
-	if rf.current_term < new_term {
+	if prev_term < new_term {
 		rf.SetVotefor(None)
 	}
 
