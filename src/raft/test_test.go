@@ -101,10 +101,11 @@ func TestOnlyOneElectionLZY(t *testing.T) {
 	cfg.disconnect(leader2)
 	cfg.connect(leader1)
 	cfg.connect(other)
+	time.Sleep(RaftElectionTimeout / 2)
 	leader3 := cfg.checkOneLeader()
 
 	if leader3 != other {
-		t.Fatalf("wrong leader", )
+		t.Fatalf("wrong leader")
 	}
 
 	cfg.end()
@@ -670,15 +671,16 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
 	fmt.Println("connect server ", (leader1+0)%servers, (leader1+1)%servers, other)
-	leader3 := cfg.checkOneLeader()
-	if leader3 != other {
-		fmt.Printf("leader3 %d is not equal to other %d\n", leader3, other)
-		cfg.t.Fatal()
-	}
 
 	// lots of successful commands to new group.
 	for i := 0; i < alot_of_logs; i++ {
 		cfg.one(rand.Int(), 3, true)
+	}
+
+	leader3 := cfg.checkOneLeader()
+	if leader3 != other {
+		fmt.Printf("leader3 %d is not equal to other %d\n", leader3, other)
+		cfg.t.Fatal()
 	}
 
 	// now everyone
