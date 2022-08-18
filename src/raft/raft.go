@@ -107,7 +107,7 @@ type Raft struct {
 
 	// Convinence chanel
 	recently_commit   chan ServerCommitIndex
-	append_entry_chan []chan *RequestAppendEntryArgs
+	append_entry_chan []chan struct{}
 	apply_ch          chan ApplyMsg
 
 	// Convinence constants
@@ -995,11 +995,26 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		select {
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
 			// send heartbeat?
-		case args := <-rf.append_entry_chan[server]:
+		case <-rf.append_entry_chan[server]:
 			log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
 			rf.mu.Lock()
 			// reduce rpc number
 			log.Print("rf.next_index is ", rf.next_index)
+			latest_log := rf.log[len(rf.log)-1]
+			append_logs := []Log{latest_log}
+			prev_log_index := latest_log.INDEX - 1
+			prev_log_term := 0
+			if prev_log_index > 0 {
+				prev_log_term = rf.log[prev_log_index-1].TERM
+			}
+			args := RequestAppendEntryArgs{
+				TERM:           rf.current_term,
+				LEADER_ID:      rf.me,
+				ENTRIES:        append_logs,
+				LEADER_COMMIT:  rf.commit_index,
+				PREV_LOG_INDEX: prev_log_index,
+				PREV_LOG_TERM:  prev_log_term,
+			}
 			if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] && rf.me != server {
 				// NOTE: why here cause problem? should promise next_index would not update by mistake,
 				// so should promise update next_index in right term
@@ -1019,7 +1034,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			}
 
 			if server == rf.me {
-				rf.__successAppend(server, this_round_term, args)
+				rf.__successAppend(server, this_round_term, &args)
 				rf.mu.Unlock()
 				continue
 			}
@@ -1029,7 +1044,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 
 			failed_times := 0
 			for reply.SUCCESS == false {
-				ok := rf.sendOneAppendEntry(server, args, reply)
+				ok := rf.sendOneAppendEntry(server, &args, reply)
 				rf.mu.Lock()
 				if !ok {
 					// TODO: break? if no client send new request,
@@ -1044,7 +1059,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 				}
 
 				if reply.SUCCESS {
-					rf.__successAppend(server, this_round_term, args)
+					rf.__successAppend(server, this_round_term, &args)
 					rf.mu.Unlock()
 					break
 				}
@@ -1091,32 +1106,8 @@ end:
 }
 
 func (rf *Raft) newRoundAppend(command interface{}, index int) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	args := make([]RequestAppendEntryArgs, rf.all_server_number)
-	this_round_term := rf.current_term
-
-	new_log := Log{
-		INDEX:   index,
-		TERM:    this_round_term,
-		COMMAND: command,
-	}
-
-	logs := []Log{new_log}
-
 	for i := 0; i < rf.all_server_number; i++ {
-		args[i].TERM = this_round_term
-		args[i].LEADER_ID = rf.me
-		args[i].LEADER_COMMIT = rf.commit_index
-		args[i].ENTRIES = logs
-		prev_log_index := index - 1
-		args[i].PREV_LOG_INDEX = prev_log_index
-		if prev_log_index > 0 {
-			args[i].PREV_LOG_TERM = rf.log[prev_log_index-1].TERM
-		}
-
-		rf.append_entry_chan[i] <- &args[i]
+		rf.append_entry_chan[i] <- struct{}{}
 	}
 }
 
@@ -1376,7 +1367,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.chanel_buffer_size = 1000
 
 	rf.recently_commit = make(chan ServerCommitIndex, rf.chanel_buffer_size)
-	rf.append_entry_chan = make([]chan *RequestAppendEntryArgs, rf.all_server_number)
+	rf.append_entry_chan = make([]chan struct{}, rf.all_server_number)
 	rf.apply_ch = applyCh
 	rf.rpc_retry_times = 1
 	rf.rpc_retry_interval_ms = 10
@@ -1385,7 +1376,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	for i := 0; i < rf.all_server_number; i++ {
 		rf.next_index[i] = 1
 		// NOTE: this is an arbitray number
-		rf.append_entry_chan[i] = make(chan *RequestAppendEntryArgs, rf.chanel_buffer_size)
+		rf.append_entry_chan[i] = make(chan struct{}, rf.chanel_buffer_size)
 	}
 
 	rf.mu.Unlock()
