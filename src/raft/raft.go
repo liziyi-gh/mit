@@ -985,6 +985,25 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 	}
 }
 
+func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs) {
+	// FIXME: need find a way to speed up this
+	old_prev_log_position := args.PREV_LOG_INDEX - 1
+	new_prev_log_position := args.PREV_LOG_INDEX - 2
+
+	for i := old_prev_log_position; i > new_prev_log_position; i-- {
+		args.ENTRIES = append(args.ENTRIES, rf.log[i])
+	}
+
+	if new_prev_log_position >= 0 {
+		new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
+		args.PREV_LOG_TERM = new_prev_log.TERM
+		args.PREV_LOG_INDEX = new_prev_log.INDEX
+	} else {
+		args.PREV_LOG_TERM = 0
+		args.PREV_LOG_INDEX = 0
+	}
+}
+
 func (rf *Raft) sendNewestLog(server int, this_round_term int) {
 	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
 	rf.mu.Lock()
@@ -1009,7 +1028,6 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int) {
 		PREV_LOG_INDEX: prev_log_index,
 		PREV_LOG_TERM:  prev_log_term,
 	}
-	reply := &RequestAppendEntryReply{}
 	failed_times := 0
 
 	// reduce rpc number
@@ -1035,7 +1053,8 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int) {
 	}
 	rf.mu.Unlock()
 
-	for reply.SUCCESS == false {
+	for {
+		reply := &RequestAppendEntryReply{}
 		ok := rf.sendOneAppendEntry(server, &args, reply)
 		rf.mu.Lock()
 		if !ok {
@@ -1068,17 +1087,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int) {
 			goto end
 		}
 
-		old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
-		args.ENTRIES = append(args.ENTRIES, old_prev_log)
-
-		if args.PREV_LOG_INDEX-2 >= 0 {
-			new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
-			args.PREV_LOG_TERM = new_prev_log.TERM
-			args.PREV_LOG_INDEX = new_prev_log.INDEX
-		} else {
-			args.PREV_LOG_TERM = 0
-			args.PREV_LOG_INDEX = 0
-		}
+		rf.backwardArgsWhenAppendEntryFailed(&args)
 		log.Print("Server[", server, "] log dismatch, new args is ", args)
 
 		rf.mu.Unlock()
