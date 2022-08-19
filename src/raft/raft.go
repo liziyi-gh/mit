@@ -444,14 +444,29 @@ func (rf *Raft) sendHeartBeat() {
 	}
 }
 
+func findLogMatched(logs []Log, term int, index int) (bool, int) {
+	for i := len(logs) - 1; i >= 0; i-- {
+		if logs[i].INDEX == index && logs[i].TERM == term {
+			return true, i
+		}
+	}
+
+	return false, None
+}
+
+func (rf *Raft) buildReplyForAppendEntryFailed(reply *RequestAppendEntryReply) {
+	// FIXME: need find a way to speed up this
+}
+
 func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	reply.SUCCESS = false
+	reply.TERM = rf.current_term
+
 	if args.TERM < rf.current_term {
 		log.Printf("Server[%d] reject Append Entry RPC from server[%d]", rf.me, args.LEADER_ID)
-		reply.SUCCESS = false
-		reply.TERM = rf.current_term
 		return
 	}
 
@@ -461,49 +476,41 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 
 	append_log_number := len(args.ENTRIES)
 
-	// log did not match
-	// FIXME: may need find a way to speed up this
 	log.Print("Server[", rf.me, "] have log", rf.log)
 	if len(rf.log) > 0 && len(args.ENTRIES) > 0 {
-		matched := false
-		for i := len(rf.log) - 1; i >= 0; i-- {
-			iter_log := &rf.log[i]
-			// log match
-			if args.PREV_LOG_INDEX == iter_log.INDEX && args.PREV_LOG_TERM == iter_log.TERM {
-				log.Printf("Server[%d] match log in position %d", rf.me, i)
-				matched = true
-				// match happen before latest log
-				if i < len(rf.log)-1 {
-					self_matched_log_index := i + 1
-					for j := len(args.ENTRIES) - 1; j >= 0; j-- {
-						args_log := &args.ENTRIES[j]
-						self_matched_log := &rf.log[self_matched_log_index]
-						if args_log.TERM != self_matched_log.TERM || args_log.INDEX != self_matched_log.INDEX {
-							log.Printf("Server[%d] log dismatched, self_matched_log_index is %d", rf.me, self_matched_log_index)
-							rf.SliceLog(self_matched_log_index)
-							break
-						}
-						self_matched_log_index++
-						append_log_number--
-					}
-					break
+		matched, imatched_position := findLogMatched(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
+
+		// prev log match and happen before latest log
+		if matched && imatched_position < len(rf.log)-1 {
+			self_matched_log_index := imatched_position + 1
+			for j := len(args.ENTRIES) - 1; j >= 0; j-- {
+				args_log := &args.ENTRIES[j]
+				self_matched_log := &rf.log[self_matched_log_index]
+				if args_log.TERM != self_matched_log.TERM || args_log.INDEX != self_matched_log.INDEX {
+					log.Printf("Server[%d] log dismatched, self_matched_log_index is %d", rf.me, self_matched_log_index)
+					rf.SliceLog(self_matched_log_index)
+					goto there
 				}
+				self_matched_log_index++
+				append_log_number--
 			}
 		}
+
+		// prev log dismatched
 		if !matched {
 			if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
 				rf.SliceLog(0)
 			} else {
-				reply.SUCCESS = false
 				log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
+				rf.buildReplyForAppendEntryFailed(reply)
 				return
 			}
 		}
 	}
+there:
 
 	if len(args.ENTRIES) > 0 && len(rf.log) == 0 {
 		if args.PREV_LOG_INDEX != 0 || args.PREV_LOG_TERM != 0 {
-			reply.SUCCESS = false
 			log.Print("Server[", rf.me, "] append log to empty failed")
 			return
 		}
@@ -524,17 +531,15 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	// prevent heartbeat commit some logs that should not commit
 	log.Print("Server[", rf.me, "] got append log args:", args)
 	if len(args.ENTRIES) == 0 && len(rf.log) >= 1 {
-		for i := len(rf.log) - 1; i >= 0; i-- {
-			iter_log := &rf.log[len(rf.log)-1]
-			if args.PREV_LOG_INDEX == iter_log.INDEX && args.PREV_LOG_TERM == iter_log.TERM {
-				log.Print("Server[", rf.me, "] going to commit args:", args)
-				log.Print("Server[", rf.me, "] have log", rf.log)
-				if args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
-					rf.updateCommitIndex(args.PREV_LOG_INDEX)
-				}
-				return
-			}
+		matched, _ := findLogMatched(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
+
+		if matched && args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
+			log.Print("Server[", rf.me, "] going to commit args:", args)
+			log.Print("Server[", rf.me, "] have log", rf.log)
+			rf.updateCommitIndex(args.PREV_LOG_INDEX)
 		}
+
+		return
 	}
 
 	return
@@ -983,8 +988,8 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 func (rf *Raft) sendNewestLog(server int, this_round_term int) {
 	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
 	rf.mu.Lock()
-	// reduce rpc number
 	log.Print("rf.next_index is ", rf.next_index)
+	// reduce rpc number
 	if len(rf.log) == 0 {
 		rf.mu.Unlock()
 		return
@@ -1004,35 +1009,32 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int) {
 		PREV_LOG_INDEX: prev_log_index,
 		PREV_LOG_TERM:  prev_log_term,
 	}
+	reply := &RequestAppendEntryReply{}
+	failed_times := 0
+
+	// reduce rpc number
 	if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] && rf.me != server {
 		// NOTE: why here cause problem? should promise next_index would not update by mistake,
 		// so should promise update next_index in right term
 		log.Print("Server[", rf.me, "] skip args ", args, "because peer ", server, " already have")
-		rf.mu.Unlock()
-		return
+		goto end
 	}
 
 	if rf.current_term != this_round_term {
-		rf.mu.Unlock()
-		return
+		goto end
 	}
 
 	if args.TERM != rf.current_term {
 		log.Print("Server[", rf.me, "] receive older Start from upper ")
-		rf.mu.Unlock()
-		return
+		goto end
 	}
 
 	if server == rf.me {
 		rf.__successAppend(server, this_round_term, &args)
-		rf.mu.Unlock()
-		return
+		goto end
 	}
 	rf.mu.Unlock()
 
-	reply := &RequestAppendEntryReply{}
-
-	failed_times := 0
 	for reply.SUCCESS == false {
 		ok := rf.sendOneAppendEntry(server, &args, reply)
 		rf.mu.Lock()
@@ -1315,7 +1317,6 @@ func (rf *Raft) ticker() {
 		}
 
 		if rf.status == CANDIDATE {
-			// NOTE: only start pre vote once?
 			rf.becomeCandidate(rf.current_term + 1)
 			rf.mu.Unlock()
 
