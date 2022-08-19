@@ -122,10 +122,6 @@ type Raft struct {
 	enable_feature_prevote bool
 }
 
-type RaftPersistent struct {
-	current_term int
-}
-
 // use this function with lock
 func (rf *Raft) SetTerm(new_term int) bool {
 	rf.current_term = new_term
