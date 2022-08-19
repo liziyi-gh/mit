@@ -297,8 +297,9 @@ func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply 
 }
 
 func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
-	if len(args.ENTRIES) == 0 {
+	if len(args.ENTRIES) != 0 {
 		log.Printf("Server[%d] send new append entry RPC to %d", rf.me, server)
+		defer log.Printf("Server[%d] send new append entry RPC to %d DONE", rf.me, server)
 	}
 	ok := rf.sendAppendEntry(server, args, reply)
 	failed_times := 0
@@ -324,7 +325,6 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		failed_times++
 		time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
 	}
-	log.Printf("Server[%d] send new append entry RPC to %d DONE", rf.me, server)
 
 	return true
 }
