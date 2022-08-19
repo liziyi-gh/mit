@@ -984,6 +984,113 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 	}
 }
 
+func (rf *Raft) sendNewestLog(server int, this_round_term int) {
+	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
+	rf.mu.Lock()
+	// reduce rpc number
+	log.Print("rf.next_index is ", rf.next_index)
+	if len(rf.log) == 0 {
+		rf.mu.Unlock()
+		return
+	}
+	latest_log := rf.log[len(rf.log)-1]
+	append_logs := []Log{latest_log}
+	prev_log_index := latest_log.INDEX - 1
+	prev_log_term := 0
+	if prev_log_index > 0 {
+		prev_log_term = rf.log[prev_log_index-1].TERM
+	}
+	args := RequestAppendEntryArgs{
+		TERM:           rf.current_term,
+		LEADER_ID:      rf.me,
+		ENTRIES:        append_logs,
+		LEADER_COMMIT:  rf.commit_index,
+		PREV_LOG_INDEX: prev_log_index,
+		PREV_LOG_TERM:  prev_log_term,
+	}
+	if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] && rf.me != server {
+		// NOTE: why here cause problem? should promise next_index would not update by mistake,
+		// so should promise update next_index in right term
+		log.Print("Server[", rf.me, "] skip args ", args, "because peer ", server, " already have")
+		rf.mu.Unlock()
+		return
+	}
+
+	if rf.current_term != this_round_term {
+		rf.mu.Unlock()
+		return
+	}
+
+	if args.TERM != rf.current_term {
+		log.Print("Server[", rf.me, "] receive older Start from upper ")
+		rf.mu.Unlock()
+		return
+	}
+
+	if server == rf.me {
+		rf.__successAppend(server, this_round_term, &args)
+		rf.mu.Unlock()
+		return
+	}
+	rf.mu.Unlock()
+
+	reply := &RequestAppendEntryReply{}
+
+	failed_times := 0
+	for reply.SUCCESS == false {
+		ok := rf.sendOneAppendEntry(server, &args, reply)
+		rf.mu.Lock()
+		if !ok {
+			goto end
+		}
+
+		// new term case 1, update term by other way
+		if this_round_term != rf.current_term {
+			goto end
+		}
+
+		if reply.SUCCESS {
+			rf.__successAppend(server, this_round_term, &args)
+			goto end
+		}
+
+		// reply is false
+		failed_times++
+		log.Print("Server[", server, "] failed time: ", failed_times, ", args is ", args)
+
+		// new term case 2, know from peer
+		if reply.TERM > rf.current_term {
+			goto end
+		}
+
+		// log not match
+		log.Print("Server[", server, "] log dismatch, args is ", args)
+
+		if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
+			goto end
+		}
+
+		old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
+		args.ENTRIES = append(args.ENTRIES, old_prev_log)
+
+		if args.PREV_LOG_INDEX-2 >= 0 {
+			new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
+			args.PREV_LOG_TERM = new_prev_log.TERM
+			args.PREV_LOG_INDEX = new_prev_log.INDEX
+		} else {
+			args.PREV_LOG_TERM = 0
+			args.PREV_LOG_INDEX = 0
+		}
+		log.Print("Server[", server, "] log dismatch, new args is ", args)
+
+		rf.mu.Unlock()
+	} // end reply false for
+
+end:
+	rf.mu.Unlock()
+	return
+}
+
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 	defer log.Print("Server[", server, "] quit handleAppendEntryForOneServer")
 
@@ -992,116 +1099,21 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 			log.Printf("one gorountine DONE")
 			return
 		}
+
+		rf.mu.Lock()
+		if rf.current_term != this_round_term {
+			rf.mu.Unlock()
+			return
+		}
+		rf.mu.Unlock()
+
 		select {
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
-			// send heartbeat?
+			rf.sendNewestLog(server, this_round_term)
 		case <-rf.append_entry_chan[server]:
-			log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
-			rf.mu.Lock()
-			// reduce rpc number
-			log.Print("rf.next_index is ", rf.next_index)
-			latest_log := rf.log[len(rf.log)-1]
-			append_logs := []Log{latest_log}
-			prev_log_index := latest_log.INDEX - 1
-			prev_log_term := 0
-			if prev_log_index > 0 {
-				prev_log_term = rf.log[prev_log_index-1].TERM
-			}
-			args := RequestAppendEntryArgs{
-				TERM:           rf.current_term,
-				LEADER_ID:      rf.me,
-				ENTRIES:        append_logs,
-				LEADER_COMMIT:  rf.commit_index,
-				PREV_LOG_INDEX: prev_log_index,
-				PREV_LOG_TERM:  prev_log_term,
-			}
-			if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] && rf.me != server {
-				// NOTE: why here cause problem? should promise next_index would not update by mistake,
-				// so should promise update next_index in right term
-				log.Print("Server[", rf.me, "] skip args ", args, "because peer ", server, " already have")
-				rf.mu.Unlock()
-				continue
-			}
-
-			if rf.current_term != this_round_term {
-				goto end
-			}
-
-			if args.TERM != rf.current_term {
-				log.Print("Server[", rf.me, "] receive older Start from upper ")
-				rf.mu.Unlock()
-				continue
-			}
-
-			if server == rf.me {
-				rf.__successAppend(server, this_round_term, &args)
-				rf.mu.Unlock()
-				continue
-			}
-			rf.mu.Unlock()
-
-			reply := &RequestAppendEntryReply{}
-
-			failed_times := 0
-			for reply.SUCCESS == false {
-				ok := rf.sendOneAppendEntry(server, &args, reply)
-				rf.mu.Lock()
-				if !ok {
-					// TODO: break? if no client send new request,
-					// the server left behind can not sync
-					rf.mu.Unlock()
-					break
-				}
-
-				// new term case 1, update term by other way
-				if this_round_term != rf.current_term {
-					goto end
-				}
-
-				if reply.SUCCESS {
-					rf.__successAppend(server, this_round_term, &args)
-					rf.mu.Unlock()
-					break
-				}
-
-				// reply is false
-				failed_times++
-				log.Print("Server[", server, "] failed time: ", failed_times, ", args is ", args)
-
-				// new term case 2, know from peer
-				if reply.TERM > rf.current_term {
-					goto end
-				}
-
-				// log not match
-				log.Print("Server[", server, "] log dismatch, args is ", args)
-
-				if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
-					rf.mu.Unlock()
-					break
-				}
-
-				old_prev_log := rf.log[args.PREV_LOG_INDEX-1]
-				args.ENTRIES = append(args.ENTRIES, old_prev_log)
-
-				if args.PREV_LOG_INDEX-2 >= 0 {
-					new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
-					args.PREV_LOG_TERM = new_prev_log.TERM
-					args.PREV_LOG_INDEX = new_prev_log.INDEX
-				} else {
-					args.PREV_LOG_TERM = 0
-					args.PREV_LOG_INDEX = 0
-				}
-				log.Print("Server[", server, "] log dismatch, new args is ", args)
-
-				rf.mu.Unlock()
-			} // end reply false for
+			rf.sendNewestLog(server, this_round_term)
 		}
 	}
-
-end:
-	rf.mu.Unlock()
-	return
 
 }
 
