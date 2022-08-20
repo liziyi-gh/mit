@@ -285,6 +285,10 @@ type RequestAppendEntryArgs struct {
 type RequestAppendEntryReply struct {
 	TERM    int  // receiver's current term
 	SUCCESS bool // true if contain matching prev log
+	// the newest log index which has same term with RequestAppendEntryArgs.PREV_LOG_TERM
+	// only valid when SUCCESS is false
+	// None if no log in this term
+	NEWST_LOG_INDEX_OF_PREV_LOG_TERM int
 }
 
 func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
@@ -444,18 +448,44 @@ func (rf *Raft) sendHeartBeat() {
 	}
 }
 
-func findLogMatched(logs []Log, term int, index int) (bool, int) {
+func findLogMatchedIndex(logs []Log, term int, index int) (bool, int) {
 	for i := len(logs) - 1; i >= 0; i-- {
 		if logs[i].INDEX == index && logs[i].TERM == term {
-			return true, i
+			return true, logs[i].INDEX
 		}
 	}
 
 	return false, None
 }
 
-func (rf *Raft) buildReplyForAppendEntryFailed(reply *RequestAppendEntryReply) {
-	// FIXME: need find a way to speed up this
+// lambda expression is so unconvenience in Go
+func findIndexOfFirstLogMatchedTerm(logs []Log, term int) (bool, int) {
+	for i := 0; i <= len(logs)-1; i++ {
+		if logs[i].TERM == term {
+			return true, logs[i].INDEX
+		}
+	}
+
+	return false, None
+}
+
+func findLastIndexOfPrevTerm(logs []Log, term int) (bool, int) {
+	for i := 0; i <= len(logs)-1; i++ {
+		if logs[i].TERM <= term {
+			return true, logs[i].INDEX
+		}
+	}
+
+	return false, None
+}
+
+func (rf *Raft) buildReplyForAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
+	found, index := findIndexOfFirstLogMatchedTerm(rf.log, args.PREV_LOG_TERM)
+	if !found {
+		reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM = None
+		return
+	}
+	reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM = index
 }
 
 func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
@@ -464,6 +494,8 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 
 	reply.SUCCESS = false
 	reply.TERM = rf.current_term
+	reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM = None
+	append_logs := args.ENTRIES
 
 	if args.TERM < rf.current_term {
 		log.Printf("Server[%d] reject Append Entry RPC from server[%d]", rf.me, args.LEADER_ID)
@@ -474,25 +506,26 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		rf.becomeFollower(args.TERM, args.LEADER_ID)
 	}
 
-	append_log_number := len(args.ENTRIES)
-
 	log.Print("Server[", rf.me, "] have log", rf.log)
+	log.Print("Server[", rf.me, "] got append log args:", args)
 	if len(rf.log) > 0 && len(args.ENTRIES) > 0 {
-		matched, imatched_position := findLogMatched(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
+		matched, matched_log_index := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
+		iter_self_log_position := matched_log_index - 1 + 1
 
-		// prev log match and happen before latest log
-		if matched && imatched_position < len(rf.log)-1 {
-			self_matched_log_index := imatched_position + 1
+		// prev log match
+		if matched {
 			for j := len(args.ENTRIES) - 1; j >= 0; j-- {
-				args_log := &args.ENTRIES[j]
-				self_matched_log := &rf.log[self_matched_log_index]
-				if args_log.TERM != self_matched_log.TERM || args_log.INDEX != self_matched_log.INDEX {
-					log.Printf("Server[%d] log dismatched, self_matched_log_index is %d", rf.me, self_matched_log_index)
-					rf.SliceLog(self_matched_log_index)
+				if iter_self_log_position >= len(rf.log) {
 					goto there
 				}
-				self_matched_log_index++
-				append_log_number--
+				iter_args_log := &args.ENTRIES[j]
+				iter_self_log := &rf.log[iter_self_log_position]
+				if iter_args_log.TERM != iter_self_log.TERM || iter_args_log.INDEX != iter_self_log.INDEX {
+					rf.SliceLog(iter_self_log_position)
+					goto there
+				}
+				iter_self_log_position++
+				append_logs = append_logs[:len(append_logs)-1]
 			}
 		}
 
@@ -502,14 +535,14 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 				rf.SliceLog(0)
 			} else {
 				log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
-				rf.buildReplyForAppendEntryFailed(reply)
+				rf.buildReplyForAppendEntryFailed(args, reply)
 				return
 			}
 		}
 	}
 there:
 
-	if len(args.ENTRIES) > 0 && len(rf.log) == 0 {
+	if len(append_logs) > 0 && len(rf.log) == 0 {
 		if args.PREV_LOG_INDEX != 0 || args.PREV_LOG_TERM != 0 {
 			log.Print("Server[", rf.me, "] append log to empty failed")
 			return
@@ -519,19 +552,18 @@ there:
 	// rpc call success
 	reply.SUCCESS = true
 
-	for i, j := 0, len(args.ENTRIES)-1; i < j; i, j = i+1, j-1 {
-		args.ENTRIES[i], args.ENTRIES[j] = args.ENTRIES[j], args.ENTRIES[i]
+	for i, j := 0, len(append_logs)-1; i < j; i, j = i+1, j-1 {
+		append_logs[i], append_logs[j] = append_logs[j], append_logs[i]
 	}
 
-	rf.AppendLogs(args.ENTRIES[:append_log_number])
-	if append_log_number > 0 {
+	rf.AppendLogs(append_logs)
+	if len(append_logs) > 0 {
 		log.Print("Server[", rf.me, "] new log is:", rf.log)
 	}
 
 	// prevent heartbeat commit some logs that should not commit
-	log.Print("Server[", rf.me, "] got append log args:", args)
-	if len(args.ENTRIES) == 0 && len(rf.log) >= 1 {
-		matched, _ := findLogMatched(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
+	if len(append_logs) == 0 && len(rf.log) >= 1 {
+		matched, _ := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
 
 		if matched && args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
 			log.Print("Server[", rf.me, "] going to commit args:", args)
@@ -985,17 +1017,32 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 	}
 }
 
-func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs) {
+func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	// FIXME: need find a way to speed up this
-	old_prev_log_position := args.PREV_LOG_INDEX - 1
+	initil_log_position := args.ENTRIES[0].INDEX - 1
 	new_prev_log_position := args.PREV_LOG_INDEX - 2
+	new_entries := make([]Log, 0)
 
-	for i := old_prev_log_position; i > new_prev_log_position; i-- {
-		args.ENTRIES = append(args.ENTRIES, rf.log[i])
+	// peer have at leaest 1 log in args.PREV_LOG_TERM
+	if reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM != None {
+		// move prev log to previous term's last log
+		ok, last_index_of_prev_term := findLastIndexOfPrevTerm(rf.log, args.PREV_LOG_TERM)
+		if ok {
+			new_prev_log_position = last_index_of_prev_term - 1
+		}
 	}
 
+	if reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM == None {
+		// FIXME:
+	}
+
+	for i := initil_log_position; i > new_prev_log_position; i-- {
+		new_entries = append(new_entries, rf.log[i])
+	}
+	args.ENTRIES = new_entries
+
 	if new_prev_log_position >= 0 {
-		new_prev_log := &rf.log[args.PREV_LOG_INDEX-2]
+		new_prev_log := &rf.log[new_prev_log_position]
 		args.PREV_LOG_TERM = new_prev_log.TERM
 		args.PREV_LOG_INDEX = new_prev_log.INDEX
 	} else {
@@ -1007,7 +1054,7 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs) 
 func (rf *Raft) sendNewestLog(server int, this_round_term int) {
 	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
 	rf.mu.Lock()
-	log.Print("rf.next_index is ", rf.next_index)
+	log.Print("Server[", rf.me, "]rf.next_index is ", rf.next_index)
 	// reduce rpc number
 	if len(rf.log) == 0 {
 		rf.mu.Unlock()
@@ -1087,7 +1134,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int) {
 			goto end
 		}
 
-		rf.backwardArgsWhenAppendEntryFailed(&args)
+		rf.backwardArgsWhenAppendEntryFailed(&args, reply)
 		log.Print("Server[", server, "] log dismatch, new args is ", args)
 
 		rf.mu.Unlock()
