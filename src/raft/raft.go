@@ -1018,7 +1018,6 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 }
 
 func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
-	// FIXME: need find a way to speed up this
 	initil_log_position := args.ENTRIES[0].INDEX - 1
 	new_prev_log_position := args.PREV_LOG_INDEX - 2
 	new_entries := make([]Log, 0)
