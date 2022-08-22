@@ -1162,6 +1162,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		rf.mu.Unlock()
 
 		select {
+		// FIXME: here block, so should use go, but prevent too much RPC.
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
 			rf.sendNewestLog(server, this_round_term)
 		case <-rf.append_entry_chan[server]:
