@@ -69,6 +69,47 @@ const (
 
 const None = -1
 
+func findLogMatchedIndex(logs []Log, term int, index int) (bool, int) {
+	for i := len(logs) - 1; i >= 0; i-- {
+		if logs[i].INDEX == index && logs[i].TERM == term {
+			return true, logs[i].INDEX
+		}
+	}
+
+	return false, None
+}
+
+// lambda expression is so unconvenience in Go
+func findIndexOfFirstLogMatchedTerm(logs []Log, term int) (bool, int) {
+	for i := 0; i <= len(logs)-1; i++ {
+		if logs[i].TERM == term {
+			return true, logs[i].INDEX
+		}
+	}
+
+	return false, None
+}
+
+func findLastIndexOfTerm(logs []Log, term int) (bool, int) {
+	for i := 0; i <= len(logs)-1; i++ {
+		if logs[i].TERM <= term {
+			return true, logs[i].INDEX
+		}
+	}
+
+	return false, None
+}
+
+func findLastIndexbeforeTerm(logs []Log, term int) (bool, int) {
+	for i := 0; i <= len(logs)-1; i++ {
+		if logs[i].TERM < term {
+			return true, logs[i].INDEX
+		}
+	}
+
+	return false, None
+}
+
 type ServerCommitIndex struct {
 	server       int
 	commit_index []int
@@ -446,47 +487,6 @@ func (rf *Raft) sendHeartBeat() {
 		rf.sendOneRoundHeartBeat()
 		rf.mu.Unlock()
 	}
-}
-
-func findLogMatchedIndex(logs []Log, term int, index int) (bool, int) {
-	for i := len(logs) - 1; i >= 0; i-- {
-		if logs[i].INDEX == index && logs[i].TERM == term {
-			return true, logs[i].INDEX
-		}
-	}
-
-	return false, None
-}
-
-// lambda expression is so unconvenience in Go
-func findIndexOfFirstLogMatchedTerm(logs []Log, term int) (bool, int) {
-	for i := 0; i <= len(logs)-1; i++ {
-		if logs[i].TERM == term {
-			return true, logs[i].INDEX
-		}
-	}
-
-	return false, None
-}
-
-func findLastIndexOfTerm(logs []Log, term int) (bool, int) {
-	for i := 0; i <= len(logs)-1; i++ {
-		if logs[i].TERM <= term {
-			return true, logs[i].INDEX
-		}
-	}
-
-	return false, None
-}
-
-func findLastIndexbeforeTerm(logs []Log, term int) (bool, int) {
-	for i := 0; i <= len(logs)-1; i++ {
-		if logs[i].TERM < term {
-			return true, logs[i].INDEX
-		}
-	}
-
-	return false, None
 }
 
 func (rf *Raft) buildReplyForAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
