@@ -321,6 +321,7 @@ type RequestAppendEntryArgs struct {
 	LEADER_COMMIT  int   // leader's commit_index
 	PREV_LOG_INDEX int
 	PREV_LOG_TERM  int
+	UUID           uint64
 }
 
 type RequestAppendEntryReply struct {
@@ -565,6 +566,7 @@ there:
 
 	// rpc call success
 	reply.SUCCESS = true
+	log.Println("Success append log UUID: ", args.UUID)
 
 	for i, j := 0, len(append_logs)-1; i < j; i, j = i+1, j-1 {
 		append_logs[i], append_logs[j] = append_logs[j], append_logs[i]
@@ -1012,6 +1014,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 // use this function when hold lock
 func (rf *Raft) __successAppend(server int, this_round_term int,
 	args *RequestAppendEntryArgs) {
+	log.Println("__successAppend handle args : ", args)
 	commit_index := make([]int, len(args.ENTRIES))
 	for i := 0; i < len(args.ENTRIES); i++ {
 		commit_index[i] = args.ENTRIES[i].INDEX
@@ -1049,6 +1052,10 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		ok, last_index_before_term := findLastIndexbeforeTerm(rf.log, args.PREV_LOG_TERM)
 		if ok {
 			new_prev_log_position = last_index_before_term - 1
+		} else {
+			if new_prev_log_position >= 0 {
+				new_prev_log_position = 0
+			}
 		}
 	}
 
@@ -1068,7 +1075,6 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 }
 
 func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
-	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
 	<-ch
 	defer func() { ch <- struct{}{} }()
 	rf.mu.Lock()
@@ -1092,7 +1098,9 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		LEADER_COMMIT:  rf.commit_index,
 		PREV_LOG_INDEX: prev_log_index,
 		PREV_LOG_TERM:  prev_log_term,
+		UUID:           rand.Uint64(),
 	}
+	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for server", server, "args is ", args)
 	failed_times := 0
 
 	// reduce rpc number
