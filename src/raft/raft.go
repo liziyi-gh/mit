@@ -322,7 +322,6 @@ type RequestAppendEntryReply struct {
 	TERM    int  // receiver's current term
 	SUCCESS bool // true if contain matching prev log
 	// the newest log index which has same term with RequestAppendEntryArgs.PREV_LOG_TERM
-	// only valid when SUCCESS is false
 	// None if no log in this term
 	NEWST_LOG_INDEX_OF_PREV_LOG_TERM int
 }
@@ -359,7 +358,7 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 
 			// maybe response lost, so need send signal
 			if reply.SUCCESS {
-				rf.__successAppend(server, args.TERM, args)
+				rf.__successAppend(server, args.TERM, args, reply)
 			}
 		}
 		rf.mu.Unlock()
@@ -470,7 +469,7 @@ func (rf *Raft) sendHeartBeat() {
 	}
 }
 
-func (rf *Raft) buildReplyForAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
+func (rf *Raft) buildNewestLogReplyForAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	found, index := findIndexOfFirstLogMatchedTerm(rf.log, args.PREV_LOG_TERM)
 	if !found {
 		reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM = None
@@ -485,7 +484,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 
 	reply.SUCCESS = false
 	reply.TERM = rf.current_term
-	reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM = None
+	rf.buildNewestLogReplyForAppendEntry(args, reply)
 	append_logs := args.ENTRIES
 
 	if args.TERM < rf.current_term {
@@ -529,7 +528,6 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 				rf.SliceLog(0)
 			} else {
 				log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
-				rf.buildReplyForAppendEntryFailed(args, reply)
 				return
 			}
 		}
@@ -539,7 +537,6 @@ there:
 	if len(append_logs) > 0 && len(rf.log) == 0 {
 		if args.PREV_LOG_INDEX != 0 || args.PREV_LOG_TERM != 0 {
 			log.Print("Server[", rf.me, "] append log to empty failed")
-			rf.buildReplyForAppendEntryFailed(args, reply)
 			return
 		}
 	}
@@ -993,7 +990,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 
 // use this function when hold lock
 func (rf *Raft) __successAppend(server int, this_round_term int,
-	args *RequestAppendEntryArgs) {
+	args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	log.Println("__successAppend handle args : ", args)
 	commit_index := make([]int, len(args.ENTRIES))
 	for i := 0; i < len(args.ENTRIES); i++ {
@@ -1002,6 +999,10 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 
 	if server != rf.me {
 		new_next_index := args.PREV_LOG_INDEX + len(args.ENTRIES) + 1
+		t := reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM + 1
+		if t > new_next_index {
+			new_next_index = t
+		}
 		if new_next_index > rf.next_index[server] {
 			log.Print("leader update next index for Server[", server, "] , new next index is ", new_next_index)
 			rf.next_index[server] = new_next_index
@@ -1097,7 +1098,8 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 	}
 
 	if server == rf.me {
-		rf.__successAppend(server, this_round_term, &args)
+		reply := &RequestAppendEntryReply{}
+		rf.__successAppend(server, this_round_term, &args, reply)
 		goto end
 	}
 	rf.mu.Unlock()
@@ -1116,7 +1118,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		}
 
 		if reply.SUCCESS {
-			rf.__successAppend(server, this_round_term, &args)
+			rf.__successAppend(server, this_round_term, &args, reply)
 			goto end
 		}
 
