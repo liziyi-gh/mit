@@ -110,12 +110,6 @@ func findLastIndexbeforeTerm(logs []Log, term int) (bool, int) {
 	return false, None
 }
 
-type ServerCommitIndex struct {
-	server       int
-	commit_index []int
-	term         int
-}
-
 // A Go object implementing a single Raft peer.
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
@@ -147,7 +141,7 @@ type Raft struct {
 	status      int
 
 	// Convinence chanel
-	recently_commit   chan ServerCommitIndex
+	recently_commit   chan struct{}
 	append_entry_chan []chan struct{}
 	apply_ch          chan ApplyMsg
 
@@ -362,6 +356,11 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 			if reply.TERM > rf.current_term {
 				rf.becomeFollower(reply.TERM, None)
 			}
+
+			// maybe response lost, so need send signal
+			if reply.SUCCESS {
+				rf.__successAppend(server, args.TERM, args)
+			}
 		}
 		rf.mu.Unlock()
 		failed_times++
@@ -371,55 +370,35 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 	return true
 }
 
+func findTopK(target []int, k int) int {
+	mut_target := make([]int, len(target))
+	copy(mut_target, target)
+	sort.Slice(mut_target, func(i, j int) bool {
+		return mut_target[i] < mut_target[j]
+	})
+	log.Println("mut_target is", mut_target)
+
+	return mut_target[len(mut_target)-k]
+}
+
 func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 	for {
 		if rf.killed() {
 			log.Printf("one gorountine DONE")
 			return
 		}
-		new_commit := <-rf.recently_commit
-		commited := make([]int, 0)
+		<-rf.recently_commit
 		rf.mu.Lock()
-		log.Printf("get new commit")
-		log.Print(new_commit)
 		if current_term != rf.current_term {
 			log.Printf("Server[%d] quit leader update commit, term change", rf.me)
 			rf.mu.Unlock()
 			return
 		}
 
-		if new_commit.term < current_term {
-			log.Printf("Server[%d] receive older leader term commit", rf.me)
-			rf.mu.Unlock()
-			continue
-		}
+		lowest_commit_index := findTopK(rf.next_index, rf.quorum_number)
+		log.Println("lowest_commit_index is ", lowest_commit_index)
 
-		for _, ele := range new_commit.commit_index {
-			commit_server_num := 0
-
-			if ele <= rf.commit_index {
-				continue
-			}
-
-			for j := 0; j < rf.all_server_number; j++ {
-				if rf.next_index[j] > ele {
-					commit_server_num += 1
-				}
-			}
-
-			if commit_server_num >= rf.quorum_number {
-				commited = append(commited, ele)
-			}
-		}
-
-		sort.Slice(commited, func(i, j int) bool {
-			return commited[i] < commited[j]
-		})
-		log.Print("leader going to commited is ", commited)
-		if len(commited) > 0 {
-			rf.updateCommitIndex(commited[len(commited)-1])
-		}
-
+		rf.updateCommitIndex(lowest_commit_index - 1)
 		rf.mu.Unlock()
 	}
 }
@@ -446,6 +425,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 }
 
 // use this function with lock
+// TODO: should refactor this, mix heartbeat and append log
 func (rf *Raft) sendOneRoundHeartBeat() {
 	i := 0
 	args := make([]RequestAppendEntryArgs, rf.all_server_number)
@@ -1027,11 +1007,7 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 			rf.next_index[server] = new_next_index
 		}
 	}
-	rf.recently_commit <- ServerCommitIndex{
-		server:       server,
-		commit_index: commit_index,
-		term:         this_round_term,
-	}
+	rf.recently_commit <- struct{}{}
 }
 
 func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
@@ -1194,7 +1170,8 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 
 		select {
 		// FIXME: here block, so should use go, but prevent too much RPC.
-		// FIXME: need a way to speed up previous leader's next_index in new leader
+		// the append_entry_chan is just one time invoke, so need timer to
+		// append log continuously, otherwise it's too slow
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
 			rf.sendNewestLog(server, this_round_term, ch)
 		case <-rf.append_entry_chan[server]:
@@ -1451,7 +1428,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// NOTE: this is an arbitray number
 	rf.chanel_buffer_size = 1000
 
-	rf.recently_commit = make(chan ServerCommitIndex, rf.chanel_buffer_size)
+	rf.recently_commit = make(chan struct{}, rf.chanel_buffer_size)
 	rf.append_entry_chan = make([]chan struct{}, rf.all_server_number)
 	rf.apply_ch = applyCh
 	rf.rpc_retry_times = 1
