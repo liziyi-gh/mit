@@ -1379,36 +1379,23 @@ func (rf *Raft) ticker() {
 			continue
 		}
 
-		if rf.status == FOLLOWER {
+		switch rf.status {
+		case FOLLOWER:
 			if rf.enable_feature_prevote {
 				rf.becomePreCandidate()
 			} else {
 				rf.becomeCandidate(rf.current_term + 1)
 			}
-			rf.mu.Unlock()
-			continue
-		}
-
-		if rf.status == PRECANDIDATE {
+		case PRECANDIDATE:
 			rf.becomeFollower(rf.current_term, rf.leader_id)
-			rf.mu.Unlock()
-
 			log.Printf("Server[%d] did not finish pre vote in time, become follower", rf.me)
-			continue
-		}
 
-		if rf.status == CANDIDATE {
+		case CANDIDATE:
 			rf.becomeCandidate(rf.current_term + 1)
-			rf.mu.Unlock()
-
 			log.Printf("Server[%d] did not finish vote in time, candidate term + 1, new term is %d", rf.me, rf.current_term)
-			continue
 		}
 
-		// code unreachable
-		log.Printf("Server[%d] reach code unreachable in ticker", rf.me)
 		rf.mu.Unlock()
-
 	}
 }
 
