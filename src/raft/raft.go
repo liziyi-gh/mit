@@ -469,9 +469,19 @@ func findIndexOfFirstLogMatchedTerm(logs []Log, term int) (bool, int) {
 	return false, None
 }
 
-func findLastIndexOfPrevTerm(logs []Log, term int) (bool, int) {
+func findLastIndexOfTerm(logs []Log, term int) (bool, int) {
 	for i := 0; i <= len(logs)-1; i++ {
 		if logs[i].TERM <= term {
+			return true, logs[i].INDEX
+		}
+	}
+
+	return false, None
+}
+
+func findLastIndexbeforeTerm(logs []Log, term int) (bool, int) {
+	for i := 0; i <= len(logs)-1; i++ {
+		if logs[i].TERM < term {
 			return true, logs[i].INDEX
 		}
 	}
@@ -1029,14 +1039,17 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 	// peer have at leaest 1 log in args.PREV_LOG_TERM
 	if reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM != None {
 		// move prev log to previous term's last log
-		ok, last_index_of_prev_term := findLastIndexOfPrevTerm(rf.log, args.PREV_LOG_TERM)
+		ok, last_index_of_prev_term := findLastIndexOfTerm(rf.log, args.PREV_LOG_TERM)
 		if ok {
 			new_prev_log_position = last_index_of_prev_term - 1
 		}
 	}
 
 	if reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM == None {
-		// FIXME:
+		ok, last_index_before_term := findLastIndexbeforeTerm(rf.log, args.PREV_LOG_TERM)
+		if ok {
+			new_prev_log_position = last_index_before_term - 1
+		}
 	}
 
 	for i := initil_log_position; i > new_prev_log_position; i-- {
