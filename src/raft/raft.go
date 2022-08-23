@@ -507,7 +507,10 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	}
 
 	log.Print("Server[", rf.me, "] have log", rf.log)
-	log.Print("Server[", rf.me, "] got append log args:", args)
+	if len(args.ENTRIES) > 0 {
+		log.Print("Server[", rf.me, "] got append log args:", args)
+	}
+
 	if len(rf.log) > 0 && len(args.ENTRIES) > 0 {
 		matched, matched_log_index := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
 		iter_self_log_position := matched_log_index - 1 + 1
@@ -545,6 +548,7 @@ there:
 	if len(append_logs) > 0 && len(rf.log) == 0 {
 		if args.PREV_LOG_INDEX != 0 || args.PREV_LOG_TERM != 0 {
 			log.Print("Server[", rf.me, "] append log to empty failed")
+			rf.buildReplyForAppendEntryFailed(args, reply)
 			return
 		}
 	}
@@ -1050,8 +1054,10 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 	}
 }
 
-func (rf *Raft) sendNewestLog(server int, this_round_term int) {
+func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
 	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for ", server)
+	<-ch
+	defer func() { ch <- struct{}{} }()
 	rf.mu.Lock()
 	log.Print("Server[", rf.me, "]rf.next_index is ", rf.next_index)
 	// reduce rpc number
@@ -1146,6 +1152,11 @@ end:
 
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 	defer log.Print("Server[", server, "] quit handleAppendEntryForOneServer")
+	worker_number := 3
+	ch := make(chan struct{}, worker_number)
+	for i := 0; i < worker_number; i++ {
+		ch <- struct{}{}
+	}
 
 	for {
 		if rf.killed() {
@@ -1163,9 +1174,9 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		select {
 		// FIXME: here block, so should use go, but prevent too much RPC.
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
-			rf.sendNewestLog(server, this_round_term)
+			rf.sendNewestLog(server, this_round_term, ch)
 		case <-rf.append_entry_chan[server]:
-			rf.sendNewestLog(server, this_round_term)
+			rf.sendNewestLog(server, this_round_term, ch)
 		}
 	}
 
