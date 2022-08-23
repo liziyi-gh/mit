@@ -1059,7 +1059,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 	<-ch
 	defer func() { ch <- struct{}{} }()
 	rf.mu.Lock()
-	log.Print("Server[", rf.me, "]rf.next_index is ", rf.next_index)
+	log.Print("Server[", rf.me, "] rf.next_index is ", rf.next_index)
 	// reduce rpc number
 	if len(rf.log) == 0 {
 		rf.mu.Unlock()
@@ -1173,6 +1173,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 
 		select {
 		// FIXME: here block, so should use go, but prevent too much RPC.
+		// FIXME: need a way to speed up previous leader's next_index in new leader
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
 			rf.sendNewestLog(server, this_round_term, ch)
 		case <-rf.append_entry_chan[server]:
