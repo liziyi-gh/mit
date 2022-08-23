@@ -1032,7 +1032,7 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 }
 
 func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
-	initil_log_position := args.ENTRIES[0].INDEX - 1
+	initil_log_position := len(rf.log) - 1
 	new_prev_log_position := args.PREV_LOG_INDEX - 2
 	new_entries := make([]Log, 0)
 
