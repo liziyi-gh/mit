@@ -395,10 +395,19 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 			return
 		}
 
-		lowest_commit_index := findTopK(rf.next_index, rf.quorum_number)
-		log.Println("lowest_commit_index is ", lowest_commit_index)
+		lowest_commit_index := findTopK(rf.next_index, rf.quorum_number) - 1
+		if lowest_commit_index <= 0 || lowest_commit_index > len(rf.log) {
+			rf.mu.Unlock()
+			continue
+		}
 
-		rf.updateCommitIndex(lowest_commit_index - 1)
+		// NOTE: prevent counting number to commit previous term's log
+		if rf.log[lowest_commit_index-1].TERM != current_term {
+			rf.mu.Unlock()
+			continue
+		}
+
+		rf.updateCommitIndex(lowest_commit_index)
 		rf.mu.Unlock()
 	}
 }
@@ -542,6 +551,13 @@ there:
 		if args.PREV_LOG_INDEX != 0 || args.PREV_LOG_TERM != 0 {
 			log.Print("Server[", rf.me, "] append log to empty failed")
 			rf.buildReplyForAppendEntryFailed(args, reply)
+			return
+		}
+	}
+
+	if len(args.ENTRIES) == 0 {
+		matched, _ := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
+		if !matched {
 			return
 		}
 	}
