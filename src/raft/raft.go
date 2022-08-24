@@ -1021,6 +1021,7 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		}
 	}
 
+	// peer do not have log in args.PREV_LOG_TERM
 	if reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM == None {
 		ok, last_index_before_term := findLastIndexbeforeTerm(rf.log, args.PREV_LOG_TERM)
 		if ok {
@@ -1032,6 +1033,7 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		}
 	}
 
+	// add logs from latest to prev_log_position to args
 	for i := initil_log_position; i > new_prev_log_position; i-- {
 		new_entries = append(new_entries, rf.log[i])
 	}
@@ -1058,6 +1060,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		return
 	}
 	latest_log := rf.log[len(rf.log)-1]
+	// TODO: reduce rpc number, from latest_log to next_index
 	append_logs := []Log{latest_log}
 	prev_log_index := latest_log.INDEX - 1
 	prev_log_term := 0
@@ -1167,7 +1170,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		rf.mu.Unlock()
 
 		select {
-		// FIXME: here block, so should use go, but prevent too much RPC.
+		// FIXME: here block, so should use go if want multipy worker, but prevent too much RPC.
 		// the append_entry_chan is just one time invoke, so need timer to
 		// append log continuously, otherwise it's too slow
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):

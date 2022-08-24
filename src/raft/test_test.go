@@ -1107,7 +1107,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 	cfg.one(rand.Int()%10000, 1, true)
 
 	nup := servers
-	tt := 10
+	tt := 1000
 	for iters := 0; iters < tt; iters++ {
 		if iters == tt/5 {
 			cfg.setlongreordering(true)
