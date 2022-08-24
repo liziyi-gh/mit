@@ -992,10 +992,6 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 func (rf *Raft) __successAppend(server int, this_round_term int,
 	args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	log.Println("__successAppend handle args : ", args)
-	commit_index := make([]int, len(args.ENTRIES))
-	for i := 0; i < len(args.ENTRIES); i++ {
-		commit_index[i] = args.ENTRIES[i].INDEX
-	}
 
 	if server != rf.me {
 		new_next_index := args.PREV_LOG_INDEX + len(args.ENTRIES) + 1
