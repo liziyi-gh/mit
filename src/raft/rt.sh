@@ -6,9 +6,10 @@ do
     ((i=i+1))
     TESTER_LOG_FILE=/tmp/tmp-fs/tester.${i}.log
     RAFT_LOG_FILE=/tmp/tmp-fs/raft.log
-    # go test -run 2A > ${TESTER_LOG_FILE}
+    go test -run 2A > ${TESTER_LOG_FILE}
+    go test -run 2B > ${TESTER_LOG_FILE}
+    go test -run 2C > ${TESTER_LOG_FILE}
     # go test -run TestOnlyOneElectionLZY -race > ${TESTER_LOG_FILE}
-    # go test -run 2B > ${TESTER_LOG_FILE}
     # go test -run TestBasicAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestFailAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestRejoin2B -race > ${TESTER_LOG_FILE}
@@ -29,11 +30,11 @@ do
 
     if [ ! -z "${tmp}" ]
     then
-        echo "Failed ${i} test"
+        echo "\033[31mFailed \033[0m${i} test"
         mv ${TESTER_LOG_FILE} ./tester.${i}.log
         mv ${RAFT_LOG_FILE} raft.${i}.log
     else
-        echo "Pass ${i} test"
+        echo -e "\033[32mPass \033[0m${i} test"
         rm -f ${RAFT_LOG_FILE}
         rm -f ${TESTER_LOG_FILE}
     fi
