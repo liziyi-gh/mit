@@ -53,6 +53,79 @@ func TestInitialElection2A(t *testing.T) {
 	cfg.end()
 }
 
+func TestReElection2A(t *testing.T) {
+	servers := 3
+	cfg := make_config(t, servers, false, false)
+	defer cfg.cleanup()
+
+	cfg.begin("Test (2A): election after network failure")
+
+	leader1 := cfg.checkOneLeader()
+
+	// if the leader disconnects, a new one should be elected.
+	cfg.disconnect(leader1)
+	cfg.checkOneLeader()
+
+	// if the old leader rejoins, that shouldn't
+	// disturb the new leader. and the old leader
+	// should switch to follower.
+	cfg.connect(leader1)
+	leader2 := cfg.checkOneLeader()
+
+	// if there's no quorum, no new leader should
+	// be elected.
+	cfg.disconnect(leader2)
+	cfg.disconnect((leader2 + 1) % servers)
+	time.Sleep(2 * RaftElectionTimeout)
+
+	// check that the one connected server
+	// does not think it is the leader.
+	cfg.checkNoLeader()
+
+	// if a quorum arises, it should elect a leader.
+	cfg.connect((leader2 + 1) % servers)
+	cfg.checkOneLeader()
+
+	// re-join of last node shouldn't prevent leader from existing.
+	cfg.connect(leader2)
+	cfg.checkOneLeader()
+
+	cfg.end()
+}
+
+func TestManyElections2A(t *testing.T) {
+	servers := 7
+	cfg := make_config(t, servers, false, false)
+	defer cfg.cleanup()
+
+	cfg.begin("Test (2A): multiple elections")
+
+	cfg.checkOneLeader()
+
+	iters := 10
+	for ii := 1; ii < iters; ii++ {
+		// disconnect three nodes
+		i1 := rand.Int() % servers
+		i2 := rand.Int() % servers
+		i3 := rand.Int() % servers
+		cfg.disconnect(i1)
+		cfg.disconnect(i2)
+		cfg.disconnect(i3)
+
+		// either the current leader should still be alive,
+		// or the remaining four should elect a new one.
+		cfg.checkOneLeader()
+
+		cfg.connect(i1)
+		cfg.connect(i2)
+		cfg.connect(i3)
+	}
+
+	cfg.checkOneLeader()
+
+	cfg.end()
+}
+
 func TestOnlyOneElectionLZY(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
@@ -107,110 +180,6 @@ func TestOnlyOneElectionLZY(t *testing.T) {
 	if leader3 != other {
 		t.Fatalf("wrong leader")
 	}
-
-	cfg.end()
-}
-
-func TestReElection2A(t *testing.T) {
-	servers := 3
-	cfg := make_config(t, servers, false, false)
-	defer cfg.cleanup()
-
-	cfg.begin("Test (2A): election after network failure")
-
-	leader1 := cfg.checkOneLeader()
-	current_time := time.Now()
-	fmt.Printf("first leader is Server[%d] ...\n", leader1)
-
-	// if the leader disconnects, a new one should be elected.
-	cfg.disconnect(leader1)
-	leader_m := cfg.checkOneLeader()
-	fmt.Printf("leader_m leader is Server[%d] ...\n", leader_m)
-
-	// if the old leader rejoins, that shouldn't
-	// disturb the new leader. and the old leader
-	// should switch to follower.
-	cfg.connect(leader1)
-	leader2 := cfg.checkOneLeader()
-	fmt.Printf("second leader is Server[%d] ...\n", leader2)
-
-	// if there's no quorum, no new leader should
-	// be elected.
-	current_time = time.Now()
-	fmt.Printf("disconnect server time is %s\n", current_time.Format("2006-01-02 15:04:05.000000"))
-	cfg.disconnect(leader2)
-	fmt.Printf("server disconnect [%d] is disconnect ...\n", leader2)
-	cfg.disconnect((leader2 + 1) % servers)
-	fmt.Printf("server disconnect [%d] is disconnect ...\n", (leader2+1)%servers)
-	time.Sleep(2 * RaftElectionTimeout)
-
-	// check that the one connected server
-	// does not think it is the leader.
-	cfg.checkNoLeader()
-	fmt.Printf("no leader ...\n")
-
-	// if a quorum arises, it should elect a leader.
-	current_time = time.Now()
-	cfg.connect((leader2 + 1) % servers)
-	fmt.Printf("rejoin server[%d] time is %s\n", (leader2+1)%servers, current_time.Format("2006-01-02 15:04:05.000000"))
-	leader3 := cfg.checkOneLeader()
-	fmt.Printf("third leader is Server[%d] ...\n", leader3)
-
-	// re-join of last node shouldn't prevent leader from existing.
-	cfg.connect(leader2)
-	leader4 := cfg.checkOneLeader()
-	fmt.Printf("fourth leader is Server[%d] ...\n", leader4)
-
-	cfg.end()
-}
-
-func TestManyElections2A(t *testing.T) {
-	servers := 7
-	cfg := make_config(t, servers, false, false)
-	defer cfg.cleanup()
-
-	cfg.begin("Test (2A): multiple elections")
-
-	cfg.checkOneLeader()
-
-	iters := 10
-	for ii := 1; ii < iters; ii++ {
-		// disconnect three nodes
-		i1 := rand.Int() % servers
-		i2 := rand.Int() % servers
-		i3 := rand.Int() % servers
-		fmt.Printf("New disconnect happen, [%d] times ...\n", ii)
-
-		current_time := time.Now()
-		cfg.disconnect(i1)
-		fmt.Printf("Server [%d] disconnected at %s ...\n", i1, current_time.Format("2006-01-02 15:04:05.000000"))
-		current_time = time.Now()
-		cfg.disconnect(i2)
-		fmt.Printf("Server [%d] disconnected at %s ...\n", i2, current_time.Format("2006-01-02 15:04:05.000000"))
-		current_time = time.Now()
-		cfg.disconnect(i3)
-		fmt.Printf("Server [%d] disconnected at %s ...\n", i3, current_time.Format("2006-01-02 15:04:05.000000"))
-
-		// either the current leader should still be alive,
-		// or the remaining four should elect a new one.
-
-		fmt.Printf("Waiting for one leader ...\n")
-		cfg.checkOneLeader()
-		fmt.Printf("Detect one leader ...\n")
-
-		cfg.connect(i1)
-		fmt.Printf("Server [%d] reconnected ...\n", i1)
-		cfg.connect(i2)
-		fmt.Printf("Server [%d] reconnected ...\n", i2)
-		cfg.connect(i3)
-		fmt.Printf("Server [%d] reconnected ...\n", i3)
-	}
-
-	fmt.Printf("Waiting for one leader, final ...\n")
-
-	cfg.checkOneLeader()
-
-	fmt.Printf("Detect one leader, final ...\n")
 
 	cfg.end()
 }
