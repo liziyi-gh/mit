@@ -439,7 +439,9 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		argi.TERM = rf.current_term
 		argi.LEADER_ID = rf.me
 		argi.LEADER_COMMIT = rf.commit_index
-		argi.PREV_LOG_INDEX = rf.next_index[i] - 1
+		if len(rf.log) >= 1 {
+			argi.PREV_LOG_INDEX = rf.log[len(rf.log)-1].INDEX
+		}
 		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= len(rf.log) {
 			argi.PREV_LOG_TERM = rf.log[argi.PREV_LOG_INDEX-1].TERM
 		}
