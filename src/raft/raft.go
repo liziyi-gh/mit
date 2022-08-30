@@ -169,6 +169,11 @@ type Raft struct {
 }
 
 // use this function with lock
+func (rf *Raft) GetLatestLogRef() *Log {
+	return &rf.log[len(rf.log)-1]
+}
+
+// use this function with lock
 func (rf *Raft) SetTerm(new_term int) bool {
 	rf.current_term = new_term
 	rf.persist()
@@ -442,7 +447,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		argi.LEADER_ID = rf.me
 		argi.LEADER_COMMIT = rf.commit_index
 		if len(rf.log) >= 1 {
-			argi.PREV_LOG_INDEX = rf.log[len(rf.log)-1].INDEX
+			argi.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
 		}
 		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= len(rf.log) {
 			argi.PREV_LOG_TERM = rf.log[argi.PREV_LOG_INDEX-1].TERM
@@ -469,7 +474,7 @@ func (rf *Raft) sendHeartBeat(this_term int) {
 			return
 		}
 
-		if (rf.current_term != this_term) {
+		if rf.current_term != this_term {
 			rf.mu.Unlock()
 			log.Printf("Server[%d] quit send heart beat, new term", rf.me)
 			return
@@ -606,7 +611,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// I have newer log
 	if len(rf.log) > 0 {
-		my_latest_log := &rf.log[len(rf.log)-1]
+		my_latest_log := rf.GetLatestLogRef()
 
 		if (my_latest_log.TERM != args.PREV_LOG_TERM) && (my_latest_log.TERM > args.PREV_LOG_TERM) {
 			log.Printf("Server[%d] reject pre vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
@@ -664,7 +669,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// I have newer log
 	if len(rf.log) > 0 {
-		my_latest_log := &rf.log[len(rf.log)-1]
+		my_latest_log := rf.GetLatestLogRef()
 
 		if (my_latest_log.TERM != args.PREV_LOG_TERM) && my_latest_log.TERM > args.PREV_LOG_TERM {
 			log.Printf("Server[%d] reject vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
@@ -733,8 +738,8 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 		args.PREV_LOG_TERM = -1
 		args.PREV_LOG_INDEX = -1
 	} else {
-		args.PREV_LOG_INDEX = rf.log[len(rf.log)-1].INDEX
-		args.PREV_LOG_TERM = rf.log[len(rf.log)-1].TERM
+		args.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
+		args.PREV_LOG_TERM = rf.GetLatestLogRef().TERM
 	}
 	rf.mu.Unlock()
 	failed_times := 0
@@ -792,8 +797,8 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 		args.PREV_LOG_TERM = -1
 		args.PREV_LOG_INDEX = -1
 	} else {
-		args.PREV_LOG_TERM = rf.log[len(rf.log)-1].TERM
-		args.PREV_LOG_INDEX = rf.log[len(rf.log)-1].INDEX
+		args.PREV_LOG_TERM = rf.GetLatestLogRef().TERM
+		args.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
 	}
 	rf.mu.Unlock()
 	log.Printf("Server[%d] start requestOneServerPreVote", rf.me)
@@ -1081,9 +1086,8 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 	}
 
 	// TODO: extract as a function: buildNewestArgs
-
-	latest_log := rf.log[len(rf.log)-1]
 	// TODO: reduce rpc number, from latest_log to next_index
+	latest_log := *rf.GetLatestLogRef()
 	append_logs := []Log{latest_log}
 	prev_log_index := latest_log.INDEX - 1
 	prev_log_term := 0
