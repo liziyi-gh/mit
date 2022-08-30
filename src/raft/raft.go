@@ -435,9 +435,6 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 	i := 0
 	args := make([]RequestAppendEntryArgs, rf.all_server_number)
 	reply := make([]RequestAppendEntryReply, rf.all_server_number)
-	if !rf.statusIs(LEADER) {
-		return
-	}
 
 	for i = 0; i < rf.all_server_number; i++ {
 		argi := &args[i]
