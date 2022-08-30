@@ -916,9 +916,6 @@ func (rf *Raft) newVote(this_round_term int) {
 			return
 		}
 	}
-
-	// code unreachable
-
 }
 
 func (rf *Raft) newPreVote(this_round_term int) bool {
@@ -1006,9 +1003,6 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 			return false
 		}
 	}
-
-	//code unreachable
-
 }
 
 // use this function when hold lock

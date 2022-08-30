@@ -30,11 +30,13 @@ do
 
     if [ ! -z "${tmp}" ]
     then
-        echo "\033[31mFailed \033[0m${i} test"
+        echo -e "\033[31mFailed \033[0m${i} test at"
+        date
         mv ${TESTER_LOG_FILE} ./tester.${i}.log
         mv ${RAFT_LOG_FILE} raft.${i}.log
     else
-        echo -e "\033[32mPass \033[0m${i} test"
+        echo -e "\033[32mPass \033[0m${i} test at"
+        date
         rm -f ${RAFT_LOG_FILE}
         rm -f ${TESTER_LOG_FILE}
     fi
