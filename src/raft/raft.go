@@ -1073,14 +1073,23 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 	<-ch
 	defer func() { ch <- struct{}{} }()
 	rf.mu.Lock()
+
+	if rf.current_term != this_round_term {
+		rf.mu.Unlock()
+		return
+	}
+
 	log.Print("Server[", rf.me, "] rf.next_index is ", rf.next_index)
-	// reduce rpc number
+	// TODO: if use as heartbeat, delete this
 	if len(rf.log) == 0 {
 		rf.mu.Unlock()
 		return
 	}
+
+	// TODO: extract as a function: buildNewestArgs
+
 	latest_log := rf.log[len(rf.log)-1]
-	// reduce rpc number, from latest_log to next_index
+	// TODO: reduce rpc number, from latest_log to next_index
 	append_logs := []Log{latest_log}
 	prev_log_index := latest_log.INDEX - 1
 	prev_log_term := 0
@@ -1104,15 +1113,6 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		// NOTE: why here cause problem? should promise next_index would not update by mistake,
 		// so should promise update next_index in right term
 		log.Print("Server[", rf.me, "] skip args ", args, "because peer ", server, " already have")
-		goto end
-	}
-
-	if rf.current_term != this_round_term {
-		goto end
-	}
-
-	if args.TERM != rf.current_term {
-		log.Print("Server[", rf.me, "] receive older Start from upper ")
 		goto end
 	}
 
