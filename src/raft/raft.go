@@ -1026,6 +1026,7 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 	rf.recently_commit <- struct{}{}
 }
 
+// use this function when hold lock
 func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	initil_log_position := len(rf.log) - 1
 	new_prev_log_position := args.PREV_LOG_INDEX - 2
@@ -1146,6 +1147,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 
 		// new term case 2, know from peer
 		if reply.TERM > rf.current_term {
+			rf.becomeFollower(reply.TERM, -1)
 			goto end
 		}
 
