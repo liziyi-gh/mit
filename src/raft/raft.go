@@ -407,6 +407,7 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 	}
 }
 
+// use this function with lock
 func (rf *Raft) updateCommitIndex(new_commit_index int) {
 	if new_commit_index <= rf.commit_index {
 		return
@@ -457,7 +458,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 	}
 }
 
-func (rf *Raft) sendHeartBeat() {
+func (rf *Raft) sendHeartBeat(this_term int) {
 	for {
 		if rf.killed() {
 			log.Printf("one gorountine DONE")
@@ -468,6 +469,12 @@ func (rf *Raft) sendHeartBeat() {
 		if !rf.statusIs(LEADER) {
 			rf.mu.Unlock()
 			log.Printf("Server[%d] quit send heart beat, no longer leader", rf.me)
+			return
+		}
+
+		if (rf.current_term != this_term) {
+			rf.mu.Unlock()
+			log.Printf("Server[%d] quit send heart beat, new term", rf.me)
 			return
 		}
 
@@ -1328,7 +1335,7 @@ func (rf *Raft) becomeLeader() {
 
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
-	go rf.sendHeartBeat()
+	go rf.sendHeartBeat(rf.current_term)
 
 	go rf.leaderUpdateCommitIndex(rf.current_term)
 
