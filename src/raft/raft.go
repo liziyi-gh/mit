@@ -1068,6 +1068,28 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 	}
 }
 
+// use with the lock
+func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
+	latest_log := *rf.GetLatestLogRef()
+	append_logs := []Log{latest_log}
+	prev_log_index := latest_log.INDEX - 1
+	prev_log_term := 0
+	if prev_log_index > 0 {
+		prev_log_term = rf.log[prev_log_index-1].TERM
+	}
+	args := &RequestAppendEntryArgs{
+		TERM:           rf.current_term,
+		LEADER_ID:      rf.me,
+		ENTRIES:        append_logs,
+		LEADER_COMMIT:  rf.commit_index,
+		PREV_LOG_INDEX: prev_log_index,
+		PREV_LOG_TERM:  prev_log_term,
+		UUID:           rand.Uint64(),
+	}
+
+	return args
+}
+
 func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
 	<-ch
 	defer func() { ch <- struct{}{} }()
@@ -1085,24 +1107,8 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		return
 	}
 
-	// TODO: extract as a function: buildNewestArgs
 	// TODO: reduce rpc number, from latest_log to next_index
-	latest_log := *rf.GetLatestLogRef()
-	append_logs := []Log{latest_log}
-	prev_log_index := latest_log.INDEX - 1
-	prev_log_term := 0
-	if prev_log_index > 0 {
-		prev_log_term = rf.log[prev_log_index-1].TERM
-	}
-	args := &RequestAppendEntryArgs{
-		TERM:           rf.current_term,
-		LEADER_ID:      rf.me,
-		ENTRIES:        append_logs,
-		LEADER_COMMIT:  rf.commit_index,
-		PREV_LOG_INDEX: prev_log_index,
-		PREV_LOG_TERM:  prev_log_term,
-		UUID:           rand.Uint64(),
-	}
+	args := rf.buildNewestArgs()
 	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for server", server, "args is ", args)
 	failed_times := 0
 
