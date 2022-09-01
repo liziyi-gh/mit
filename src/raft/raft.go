@@ -169,6 +169,11 @@ type Raft struct {
 }
 
 // use this function with lock
+func (rf *Raft) LogLength() int {
+	return len(rf.log)
+}
+
+// use this function with lock
 func (rf *Raft) GetLatestLogRef() *Log {
 	return &rf.log[len(rf.log)-1]
 }
@@ -396,7 +401,7 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 		}
 
 		lowest_commit_index := findTopK(rf.next_index, rf.quorum_number) - 1
-		if lowest_commit_index <= 0 || lowest_commit_index > len(rf.log) {
+		if lowest_commit_index <= 0 || lowest_commit_index > rf.LogLength() {
 			rf.mu.Unlock()
 			continue
 		}
@@ -419,7 +424,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 	}
 
 	for i := rf.commit_index + 1; i <= new_commit_index; i++ {
-		if i > len(rf.log) {
+		if i > rf.LogLength() {
 			break
 		}
 		tmp := ApplyMsg{
@@ -446,10 +451,10 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		argi.TERM = rf.current_term
 		argi.LEADER_ID = rf.me
 		argi.LEADER_COMMIT = rf.commit_index
-		if len(rf.log) >= 1 {
+		if rf.LogLength() >= 1 {
 			argi.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
 		}
-		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= len(rf.log) {
+		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= rf.LogLength() {
 			argi.PREV_LOG_TERM = rf.log[argi.PREV_LOG_INDEX-1].TERM
 		}
 		// don't send heart beat to myself
@@ -517,14 +522,14 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		log.Print("Server[", rf.me, "] got append log args:", args)
 	}
 
-	if len(rf.log) > 0 && len(args.ENTRIES) > 0 {
+	if rf.LogLength() > 0 && len(args.ENTRIES) > 0 {
 		matched, matched_log_index := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
 		iter_self_log_position := matched_log_index - 1 + 1
 
 		// prev log match
 		if matched {
 			for j := len(args.ENTRIES) - 1; j >= 0; j-- {
-				if iter_self_log_position >= len(rf.log) {
+				if iter_self_log_position >= rf.LogLength() {
 					goto there
 				}
 				iter_args_log := &args.ENTRIES[j]
@@ -551,7 +556,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	}
 there:
 
-	if len(append_logs) > 0 && len(rf.log) == 0 {
+	if len(append_logs) > 0 && rf.LogLength() == 0 {
 		if args.PREV_LOG_INDEX != 0 || args.PREV_LOG_TERM != 0 {
 			log.Print("Server[", rf.me, "] append log to empty failed")
 			rf.buildReplyForAppendEntryFailed(args, reply)
@@ -580,7 +585,7 @@ there:
 	}
 
 	// prevent heartbeat commit some logs that should not commit
-	if len(append_logs) == 0 && len(rf.log) >= 1 {
+	if len(append_logs) == 0 && rf.LogLength() >= 1 {
 		matched, _ := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
 
 		if matched && args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
@@ -610,7 +615,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// I have newer log
-	if len(rf.log) > 0 {
+	if rf.LogLength() > 0 {
 		my_latest_log := rf.GetLatestLogRef()
 
 		if (my_latest_log.TERM != args.PREV_LOG_TERM) && (my_latest_log.TERM > args.PREV_LOG_TERM) {
@@ -668,7 +673,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// I have newer log
-	if len(rf.log) > 0 {
+	if rf.LogLength() > 0 {
 		my_latest_log := rf.GetLatestLogRef()
 
 		if (my_latest_log.TERM != args.PREV_LOG_TERM) && my_latest_log.TERM > args.PREV_LOG_TERM {
@@ -734,7 +739,7 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 	rf.mu.Lock()
 	args.TERM = this_round_term
 	args.CANDIDATE_ID = rf.me
-	if len(rf.log) == 0 {
+	if rf.LogLength() == 0 {
 		args.PREV_LOG_TERM = -1
 		args.PREV_LOG_INDEX = -1
 	} else {
@@ -793,7 +798,7 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 	args.TERM = this_round_term + 1
 	args.CANDIDATE_ID = rf.me
 
-	if len(rf.log) == 0 {
+	if rf.LogLength() == 0 {
 		args.PREV_LOG_TERM = -1
 		args.PREV_LOG_INDEX = -1
 	} else {
@@ -1027,7 +1032,7 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 
 // use this function when hold lock
 func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
-	initil_log_position := len(rf.log) - 1
+	initil_log_position := rf.LogLength() - 1
 	new_prev_log_position := args.PREV_LOG_INDEX - 2
 	new_entries := make([]Log, 0)
 
@@ -1102,7 +1107,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 
 	log.Print("Server[", rf.me, "] rf.next_index is ", rf.next_index)
 	// TODO: if use as heartbeat, delete this
-	if len(rf.log) == 0 {
+	if rf.LogLength() == 0 {
 		rf.mu.Unlock()
 		return
 	}
@@ -1240,7 +1245,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	term = rf.current_term
 	isLeader = true
-	index = len(rf.log) + 1
+	index = rf.LogLength() + 1
 	rf.next_index[rf.me] = index + 1
 	new_log := &Log{
 		INDEX:   index,
@@ -1334,7 +1339,7 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 // use this function when hold the lock
 func (rf *Raft) becomeLeader() {
 	rf.status = LEADER
-	rf.next_index[rf.me] = len(rf.log)
+	rf.next_index[rf.me] = rf.LogLength()
 
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
