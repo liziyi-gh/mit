@@ -174,6 +174,11 @@ func (rf *Raft) LogLength() int {
 }
 
 // use this function with lock
+func (rf *Raft) GetLogTerm(index int) int {
+	return rf.log[index-1].TERM
+}
+
+// use this function with lock
 func (rf *Raft) GetLatestLogRef() *Log {
 	return &rf.log[len(rf.log)-1]
 }
@@ -407,7 +412,7 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 		}
 
 		// NOTE: prevent counting number to commit previous term's log
-		if rf.log[lowest_commit_index-1].TERM != current_term {
+		if rf.GetLogTerm(lowest_commit_index) != current_term {
 			rf.mu.Unlock()
 			continue
 		}
@@ -455,7 +460,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 			argi.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
 		}
 		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= rf.LogLength() {
-			argi.PREV_LOG_TERM = rf.log[argi.PREV_LOG_INDEX-1].TERM
+			argi.PREV_LOG_TERM = rf.GetLogTerm(argi.PREV_LOG_INDEX)
 		}
 		// don't send heart beat to myself
 		if i == args[i].LEADER_ID {
@@ -1080,7 +1085,7 @@ func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
 	prev_log_index := latest_log.INDEX - 1
 	prev_log_term := 0
 	if prev_log_index > 0 {
-		prev_log_term = rf.log[prev_log_index-1].TERM
+		prev_log_term = rf.GetLogTerm(prev_log_index)
 	}
 	args := &RequestAppendEntryArgs{
 		TERM:           rf.current_term,
