@@ -434,6 +434,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		}
 		tmp := ApplyMsg{
 			CommandValid: true,
+			// FIXME:
 			Command:      rf.log[i-1].COMMAND,
 			CommandIndex: rf.log[i-1].INDEX,
 		}
@@ -538,6 +539,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 					goto there
 				}
 				iter_args_log := &args.ENTRIES[j]
+				// FIXME:
 				iter_self_log := &rf.log[iter_self_log_position]
 				if iter_args_log.TERM != iter_self_log.TERM || iter_args_log.INDEX != iter_self_log.INDEX {
 					rf.SliceLog(iter_self_log_position)
@@ -1064,11 +1066,13 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 
 	// add logs from latest to prev_log_position to args
 	for i := initil_log_position; i > new_prev_log_position; i-- {
+		// FIXME:
 		new_entries = append(new_entries, rf.log[i])
 	}
 	args.ENTRIES = new_entries
 
 	if new_prev_log_position >= 0 {
+		// FIXME:
 		new_prev_log := &rf.log[new_prev_log_position]
 		args.PREV_LOG_TERM = new_prev_log.TERM
 		args.PREV_LOG_INDEX = new_prev_log.INDEX
