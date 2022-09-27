@@ -179,22 +179,18 @@ func (rf *Raft) GetLogTerm(index int) int {
 }
 
 // use this function with lock
+func (rf *Raft) GetLogCommand(index int) interface{} {
+	return rf.log[index-1].COMMAND
+}
+
+// use this function with lock
+func (rf *Raft) GetLogIndex(index int) int {
+	return rf.log[index-1].INDEX
+}
+
+// use this function with lock
 func (rf *Raft) GetLatestLogRef() *Log {
 	return &rf.log[len(rf.log)-1]
-}
-
-// use this function with lock
-func (rf *Raft) SetTerm(new_term int) bool {
-	rf.current_term = new_term
-	rf.persist()
-	return true
-}
-
-// use this function with lock
-func (rf *Raft) SetVotefor(vote_for int) bool {
-	rf.voted_for = vote_for
-	rf.persist()
-	return true
 }
 
 // use this function with lock
@@ -214,6 +210,20 @@ func (rf *Raft) AppendLogs(logs []Log) bool {
 // use this function with lock
 func (rf *Raft) SliceLog(last_log_index int) bool {
 	rf.log = rf.log[:last_log_index]
+	rf.persist()
+	return true
+}
+
+// use this function with lock
+func (rf *Raft) SetTerm(new_term int) bool {
+	rf.current_term = new_term
+	rf.persist()
+	return true
+}
+
+// use this function with lock
+func (rf *Raft) SetVotefor(vote_for int) bool {
+	rf.voted_for = vote_for
 	rf.persist()
 	return true
 }
@@ -434,9 +444,8 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		}
 		tmp := ApplyMsg{
 			CommandValid: true,
-			// FIXME:
-			Command:      rf.log[i-1].COMMAND,
-			CommandIndex: rf.log[i-1].INDEX,
+			Command:      rf.GetLogCommand(i),
+			CommandIndex: rf.GetLogIndex(i),
 		}
 		rf.apply_ch <- tmp
 		rf.commit_index = i
@@ -539,9 +548,8 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 					goto there
 				}
 				iter_args_log := &args.ENTRIES[j]
-				// FIXME:
-				iter_self_log := &rf.log[iter_self_log_position]
-				if iter_args_log.TERM != iter_self_log.TERM || iter_args_log.INDEX != iter_self_log.INDEX {
+				iter_self_log_idx := iter_self_log_position + 1
+				if iter_args_log.TERM != rf.GetLogTerm(iter_self_log_idx) || iter_args_log.INDEX != rf.GetLogIndex(iter_self_log_idx) {
 					rf.SliceLog(iter_self_log_position)
 					goto there
 				}
@@ -1066,16 +1074,15 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 
 	// add logs from latest to prev_log_position to args
 	for i := initil_log_position; i > new_prev_log_position; i-- {
-		// FIXME:
+		// FIXME: if can not see rf.log[i] anymore, install snapshot
 		new_entries = append(new_entries, rf.log[i])
 	}
 	args.ENTRIES = new_entries
 
 	if new_prev_log_position >= 0 {
-		// FIXME:
-		new_prev_log := &rf.log[new_prev_log_position]
-		args.PREV_LOG_TERM = new_prev_log.TERM
-		args.PREV_LOG_INDEX = new_prev_log.INDEX
+		new_prev_log_idx := new_prev_log_position + 1
+		args.PREV_LOG_TERM = rf.GetLogTerm(new_prev_log_idx)
+		args.PREV_LOG_INDEX = rf.GetLogIndex(new_prev_log_idx)
 	} else {
 		args.PREV_LOG_TERM = 0
 		args.PREV_LOG_INDEX = 0
