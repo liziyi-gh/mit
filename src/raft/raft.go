@@ -539,21 +539,20 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 
 	if rf.LogLength() > 0 && len(args.ENTRIES) > 0 {
 		matched, matched_log_index := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
-		iter_self_log_position := matched_log_index - 1 + 1
+		iter_self_log_index := matched_log_index + 1
 
 		// prev log match
 		if matched {
 			for j := len(args.ENTRIES) - 1; j >= 0; j-- {
-				if iter_self_log_position >= rf.LogLength() {
+				if iter_self_log_index >= rf.GetLatestLogRef().INDEX {
 					goto there
 				}
 				iter_args_log := &args.ENTRIES[j]
-				iter_self_log_idx := iter_self_log_position + 1
-				if iter_args_log.TERM != rf.GetLogTerm(iter_self_log_idx) || iter_args_log.INDEX != rf.GetLogIndex(iter_self_log_idx) {
-					rf.SliceLog(iter_self_log_position)
+				if iter_args_log.TERM != rf.GetLogTerm(iter_self_log_index) || iter_args_log.INDEX != rf.GetLogIndex(iter_self_log_index) {
+					rf.SliceLog(iter_self_log_index - 1)
 					goto there
 				}
-				iter_self_log_position++
+				iter_self_log_index++
 				append_logs = append_logs[:len(append_logs)-1]
 			}
 		}
