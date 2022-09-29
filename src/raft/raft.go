@@ -208,10 +208,33 @@ func (rf *Raft) AppendLogs(logs []Log) bool {
 }
 
 // use this function with lock
-func (rf *Raft) SliceLog(last_log_index int) bool {
-	rf.log = rf.log[:last_log_index]
+// remove all logs that index > last_log_index
+func (rf *Raft) SliceLogToIndex(last_log_index int) bool {
+	reserve_logs_number := 0
+	for i := 0; i < rf.LogLength(); i++ {
+		if rf.log[i].INDEX == last_log_index {
+			reserve_logs_number = i + 1
+			break
+		}
+	}
+	rf.log = rf.log[:reserve_logs_number]
 	rf.persist()
 	return true
+}
+
+// use this function with lock
+func (rf *Raft) GetPositionByIndex(index int) (int, bool) {
+	for i := rf.LogLength() - 1; i >= 0; i-- {
+		if rf.log[i].INDEX == index {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// use this function with lock
+func (rf *Raft) GetIndexByPosition(position int) int {
+	return rf.log[position].INDEX
 }
 
 // use this function with lock
@@ -539,7 +562,11 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 
 	if rf.LogLength() > 0 && len(args.ENTRIES) > 0 {
 		matched, matched_log_index := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
-		iter_self_log_position := matched_log_index - 1 + 1
+		matched_log_position, ok := rf.GetPositionByIndex(matched_log_index)
+		if !ok {
+			// TODO:
+		}
+		iter_self_log_position := matched_log_position + 1
 
 		// prev log match
 		if matched {
@@ -548,9 +575,11 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 					goto there
 				}
 				iter_args_log := &args.ENTRIES[j]
-				iter_self_log_idx := iter_self_log_position + 1
-				if iter_args_log.TERM != rf.GetLogTerm(iter_self_log_idx) || iter_args_log.INDEX != rf.GetLogIndex(iter_self_log_idx) {
-					rf.SliceLog(iter_self_log_position)
+				iter_self_log_idx := rf.GetIndexByPosition(iter_self_log_position)
+				dismatch := iter_args_log.TERM != rf.GetLogTerm(iter_self_log_idx) ||
+					iter_args_log.INDEX != rf.GetLogIndex(iter_self_log_idx)
+				if dismatch {
+					rf.SliceLogToIndex(rf.GetIndexByPosition(iter_self_log_position - 1))
 					goto there
 				}
 				iter_self_log_position++
@@ -561,7 +590,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		// prev log dismatched
 		if !matched {
 			if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
-				rf.SliceLog(0)
+				rf.SliceLogToIndex(0)
 			} else {
 				log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
 				rf.buildReplyForAppendEntryFailed(args, reply)
