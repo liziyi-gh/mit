@@ -191,13 +191,15 @@ func (rf *Raft) LogLength() int {
 }
 
 // use this function with lock
-func (rf *Raft) GetLogTerm(index int) int {
+func (rf *Raft) GetLogTermByIndex(index int) int {
+	// FIXME: what happen when log in snapshot
 	position, _ := rf.GetPositionByIndex(index)
 	return rf.log[position].TERM
 }
 
 // use this function with lock
-func (rf *Raft) GetLogCommand(index int) interface{} {
+func (rf *Raft) GetLogCommandByIndex(index int) interface{} {
+	// FIXME: what happen when log in snapshot
 	position, _ := rf.GetPositionByIndex(index)
 	return rf.log[position].COMMAND
 }
@@ -468,7 +470,7 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 		}
 
 		// NOTE: prevent counting number to commit previous term's log
-		if rf.GetLogTerm(lowest_commit_index) != current_term {
+		if rf.GetLogTermByIndex(lowest_commit_index) != current_term {
 			rf.mu.Unlock()
 			continue
 		}
@@ -487,7 +489,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 	for idx := rf.commit_index + 1; idx <= new_commit_index && idx <= rf.GetLatestLogIndex(); idx++ {
 		tmp := ApplyMsg{
 			CommandValid: true,
-			Command:      rf.GetLogCommand(idx),
+			Command:      rf.GetLogCommandByIndex(idx),
 			CommandIndex: rf.GetLogIndex(idx),
 		}
 		rf.apply_ch <- tmp
@@ -513,7 +515,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 			argi.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
 		}
 		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= rf.GetLatestLogRef().INDEX {
-			argi.PREV_LOG_TERM = rf.GetLogTerm(argi.PREV_LOG_INDEX)
+			argi.PREV_LOG_TERM = rf.GetLogTermByIndex(argi.PREV_LOG_INDEX)
 		}
 		// don't send heart beat to myself
 		if i == args[i].LEADER_ID {
@@ -582,10 +584,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 
 	if rf.HaveAnyLog() && len(args.ENTRIES) > 0 {
 		matched, matched_log_index := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
-		matched_log_position, ok := rf.GetPositionByIndex(matched_log_index)
-		if !ok {
-			// TODO:
-		}
+		matched_log_position, _ := rf.GetPositionByIndex(matched_log_index)
 		iter_self_log_position := matched_log_position + 1
 
 		// prev log match
@@ -596,8 +595,9 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 				}
 				iter_args_log := &args.ENTRIES[j]
 				iter_self_log_idx := rf.GetIndexByPosition(iter_self_log_position)
-				dismatch := iter_args_log.TERM != rf.GetLogTerm(iter_self_log_idx) ||
-					iter_args_log.INDEX != rf.GetLogIndex(iter_self_log_idx)
+				not_same_term := iter_args_log.TERM != rf.GetLogTermByIndex(iter_self_log_idx)
+				not_same_index := iter_args_log.INDEX != rf.GetLogIndex(iter_self_log_idx)
+				dismatch := not_same_term || not_same_index
 				if dismatch {
 					rf.SliceLogToIndex(rf.GetIndexByPosition(iter_self_log_position - 1))
 					goto there
@@ -1130,7 +1130,7 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 
 	if new_prev_log_position >= 0 {
 		new_prev_log_idx := new_prev_log_position + 1
-		args.PREV_LOG_TERM = rf.GetLogTerm(new_prev_log_idx)
+		args.PREV_LOG_TERM = rf.GetLogTermByIndex(new_prev_log_idx)
 		args.PREV_LOG_INDEX = rf.GetLogIndex(new_prev_log_idx)
 	} else {
 		args.PREV_LOG_TERM = 0
@@ -1145,7 +1145,7 @@ func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
 	prev_log_index := latest_log.INDEX - 1
 	prev_log_term := 0
 	if prev_log_index > 0 {
-		prev_log_term = rf.GetLogTerm(prev_log_index)
+		prev_log_term = rf.GetLogTermByIndex(prev_log_index)
 	}
 	args := &RequestAppendEntryArgs{
 		TERM:           rf.current_term,
