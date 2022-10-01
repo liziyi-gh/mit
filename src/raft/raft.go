@@ -211,6 +211,7 @@ func (rf *Raft) HaveAnyLog() bool {
 
 // use this function with lock
 func (rf *Raft) GetLatestLogRef() *Log {
+	// FIXME:
 	if rf.HaveAnyLog() {
 		return &rf.log[len(rf.log)-1]
 	}
@@ -219,8 +220,18 @@ func (rf *Raft) GetLatestLogRef() *Log {
 
 // use this function with lock
 func (rf *Raft) GetLatestLogIndex() int {
+	// FIXME:
 	if rf.HaveAnyLog() {
 		return rf.log[len(rf.log)-1].INDEX
+	}
+	return 0
+}
+
+// use this function with lock
+func (rf *Raft) GetLatestLogTerm() int {
+	// FIXME:
+	if rf.HaveAnyLog() {
+		return rf.log[len(rf.log)-1].TERM
 	}
 	return 0
 }
@@ -458,7 +469,7 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 		}
 
 		lowest_commit_index := findTopK(rf.next_index, rf.quorum_number) - 1
-		if lowest_commit_index <= 0 || lowest_commit_index > rf.GetLatestLogRef().INDEX {
+		if lowest_commit_index <= 0 || lowest_commit_index > rf.GetLatestLogIndex() {
 			rf.mu.Unlock()
 			continue
 		}
@@ -506,9 +517,9 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		argi.LEADER_ID = rf.me
 		argi.LEADER_COMMIT = rf.commit_index
 		if rf.HaveAnyLog() {
-			argi.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
+			argi.PREV_LOG_INDEX = rf.GetLatestLogIndex()
 		}
-		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= rf.GetLatestLogRef().INDEX {
+		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= rf.GetLatestLogIndex() {
 			argi.PREV_LOG_TERM = rf.GetLogTermByIndex(argi.PREV_LOG_INDEX)
 		}
 		// don't send heart beat to myself
@@ -798,8 +809,8 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 	args.TERM = this_round_term
 	args.CANDIDATE_ID = rf.me
 	if rf.HaveAnyLog() {
-		args.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
-		args.PREV_LOG_TERM = rf.GetLatestLogRef().TERM
+		args.PREV_LOG_INDEX = rf.GetLatestLogIndex()
+		args.PREV_LOG_TERM = rf.GetLatestLogTerm()
 	} else {
 		args.PREV_LOG_TERM = -1
 		args.PREV_LOG_INDEX = -1
@@ -857,8 +868,8 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 	args.CANDIDATE_ID = rf.me
 
 	if rf.HaveAnyLog() {
-		args.PREV_LOG_TERM = rf.GetLatestLogRef().TERM
-		args.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
+		args.PREV_LOG_TERM = rf.GetLatestLogTerm()
+		args.PREV_LOG_INDEX = rf.GetLatestLogIndex()
 	} else {
 		args.PREV_LOG_TERM = -1
 		args.PREV_LOG_INDEX = -1
