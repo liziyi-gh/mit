@@ -205,12 +205,6 @@ func (rf *Raft) GetLogCommandByIndex(index int) interface{} {
 }
 
 // use this function with lock
-func (rf *Raft) GetLogIndex(index int) int {
-	position, _ := rf.GetPositionByIndex(index)
-	return rf.log[position].INDEX
-}
-
-// use this function with lock
 func (rf *Raft) HaveAnyLog() bool {
 	return rf.LogLength() >= 1
 }
@@ -490,7 +484,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		tmp := ApplyMsg{
 			CommandValid: true,
 			Command:      rf.GetLogCommandByIndex(idx),
-			CommandIndex: rf.GetLogIndex(idx),
+			CommandIndex: idx,
 		}
 		rf.apply_ch <- tmp
 		rf.commit_index = idx
@@ -596,7 +590,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 				iter_args_log := &args.ENTRIES[j]
 				iter_self_log_idx := rf.GetIndexByPosition(iter_self_log_position)
 				not_same_term := iter_args_log.TERM != rf.GetLogTermByIndex(iter_self_log_idx)
-				not_same_index := iter_args_log.INDEX != rf.GetLogIndex(iter_self_log_idx)
+				not_same_index := iter_args_log.INDEX != iter_self_log_idx
 				dismatch := not_same_term || not_same_index
 				if dismatch {
 					rf.SliceLogToIndex(rf.GetIndexByPosition(iter_self_log_position - 1))
@@ -1131,7 +1125,7 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 	if new_prev_log_position >= 0 {
 		new_prev_log_idx := new_prev_log_position + 1
 		args.PREV_LOG_TERM = rf.GetLogTermByIndex(new_prev_log_idx)
-		args.PREV_LOG_INDEX = rf.GetLogIndex(new_prev_log_idx)
+		args.PREV_LOG_INDEX = new_prev_log_idx
 	} else {
 		args.PREV_LOG_TERM = 0
 		args.PREV_LOG_INDEX = 0
