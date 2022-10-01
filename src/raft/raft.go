@@ -168,7 +168,7 @@ type Raft struct {
 	enable_feature_prevote bool
 }
 
-// NOTE: start log function
+// NOTE: begin log function
 
 // use this function with lock
 func (rf *Raft) GetPositionByIndex(index int) (int, bool) {
@@ -192,25 +192,41 @@ func (rf *Raft) LogLength() int {
 
 // use this function with lock
 func (rf *Raft) GetLogTerm(index int) int {
-	return rf.log[index-1].TERM
+	position, _ := rf.GetPositionByIndex(index)
+	return rf.log[position].TERM
 }
 
 // use this function with lock
 func (rf *Raft) GetLogCommand(index int) interface{} {
-	return rf.log[index-1].COMMAND
+	position, _ := rf.GetPositionByIndex(index)
+	return rf.log[position].COMMAND
 }
 
 // use this function with lock
 func (rf *Raft) GetLogIndex(index int) int {
-	return rf.log[index-1].INDEX
+	position, _ := rf.GetPositionByIndex(index)
+	return rf.log[position].INDEX
+}
+
+// use this function with lock
+func (rf *Raft) HaveAnyLog() bool {
+	return rf.LogLength() >= 1
 }
 
 // use this function with lock
 func (rf *Raft) GetLatestLogRef() *Log {
-	if rf.LogLength() >= 1 {
+	if rf.HaveAnyLog() {
 		return &rf.log[len(rf.log)-1]
 	}
 	return nil
+}
+
+// use this function with lock
+func (rf *Raft) GetLatestLogIndex() int {
+	if rf.HaveAnyLog() {
+		return rf.log[len(rf.log)-1].INDEX
+	}
+	return 0
 }
 
 // use this function with lock
@@ -468,7 +484,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		return
 	}
 
-	for idx := rf.commit_index + 1; idx <= new_commit_index && idx <= rf.LogLength(); idx++ {
+	for idx := rf.commit_index + 1; idx <= new_commit_index && idx <= rf.GetLatestLogIndex(); idx++ {
 		tmp := ApplyMsg{
 			CommandValid: true,
 			Command:      rf.GetLogCommand(idx),
@@ -493,7 +509,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		argi.TERM = rf.current_term
 		argi.LEADER_ID = rf.me
 		argi.LEADER_COMMIT = rf.commit_index
-		if rf.LogLength() >= 1 {
+		if rf.HaveAnyLog() {
 			argi.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
 		}
 		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= rf.GetLatestLogRef().INDEX {
@@ -564,7 +580,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		log.Print("Server[", rf.me, "] got append log args:", args)
 	}
 
-	if rf.LogLength() > 0 && len(args.ENTRIES) > 0 {
+	if rf.HaveAnyLog() && len(args.ENTRIES) > 0 {
 		matched, matched_log_index := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
 		matched_log_position, ok := rf.GetPositionByIndex(matched_log_index)
 		if !ok {
@@ -604,7 +620,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	}
 there:
 
-	if len(append_logs) > 0 && rf.LogLength() == 0 {
+	if len(append_logs) > 0 && !rf.HaveAnyLog() {
 		if args.PREV_LOG_INDEX != 0 || args.PREV_LOG_TERM != 0 {
 			log.Print("Server[", rf.me, "] append log to empty failed")
 			rf.buildReplyForAppendEntryFailed(args, reply)
@@ -633,7 +649,7 @@ there:
 	}
 
 	// prevent heartbeat commit some logs that should not commit
-	if len(append_logs) == 0 && rf.LogLength() >= 1 {
+	if len(append_logs) == 0 && rf.HaveAnyLog() {
 		matched, _ := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
 
 		if matched && args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
@@ -663,7 +679,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// I have newer log
-	if rf.LogLength() >= 1 {
+	if rf.HaveAnyLog() {
 		my_latest_log := rf.GetLatestLogRef()
 
 		if (my_latest_log.TERM != args.PREV_LOG_TERM) && (my_latest_log.TERM > args.PREV_LOG_TERM) {
@@ -721,7 +737,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// I have newer log
-	if rf.LogLength() >= 1 {
+	if rf.HaveAnyLog() {
 		my_latest_log := rf.GetLatestLogRef()
 
 		if (my_latest_log.TERM != args.PREV_LOG_TERM) && my_latest_log.TERM > args.PREV_LOG_TERM {
@@ -787,12 +803,12 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 	rf.mu.Lock()
 	args.TERM = this_round_term
 	args.CANDIDATE_ID = rf.me
-	if rf.LogLength() == 0 {
-		args.PREV_LOG_TERM = -1
-		args.PREV_LOG_INDEX = -1
-	} else {
+	if rf.HaveAnyLog() {
 		args.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
 		args.PREV_LOG_TERM = rf.GetLatestLogRef().TERM
+	} else {
+		args.PREV_LOG_TERM = -1
+		args.PREV_LOG_INDEX = -1
 	}
 	rf.mu.Unlock()
 	failed_times := 0
@@ -846,12 +862,12 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 	args.TERM = this_round_term + 1
 	args.CANDIDATE_ID = rf.me
 
-	if rf.LogLength() == 0 {
-		args.PREV_LOG_TERM = -1
-		args.PREV_LOG_INDEX = -1
-	} else {
+	if rf.HaveAnyLog() {
 		args.PREV_LOG_TERM = rf.GetLatestLogRef().TERM
 		args.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
+	} else {
+		args.PREV_LOG_TERM = -1
+		args.PREV_LOG_INDEX = -1
 	}
 	rf.mu.Unlock()
 	log.Printf("Server[%d] start requestOneServerPreVote", rf.me)
@@ -1156,7 +1172,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 
 	log.Print("Server[", rf.me, "] rf.next_index is ", rf.next_index)
 	// TODO: if use as heartbeat, delete this
-	if rf.LogLength() == 0 {
+	if !rf.HaveAnyLog() {
 		rf.mu.Unlock()
 		return
 	}
@@ -1294,12 +1310,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	term = rf.current_term
 	isLeader = true
-	latest_log_index := 0
-	latest_log := rf.GetLatestLogRef()
-	if latest_log != nil {
-		latest_log_index = latest_log.INDEX
-	}
-	new_log_index = latest_log_index + 1
+	new_log_index = rf.GetLatestLogIndex() + 1
 	rf.next_index[rf.me] = new_log_index + 1
 	new_log := &Log{
 		INDEX:   new_log_index,
@@ -1393,12 +1404,7 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 // use this function when hold the lock
 func (rf *Raft) becomeLeader() {
 	rf.status = LEADER
-	latest_log_index := 0
-	latest_log := rf.GetLatestLogRef()
-	if latest_log != nil {
-		latest_log_index = latest_log.INDEX
-	}
-	rf.next_index[rf.me] = latest_log_index + 1
+	rf.next_index[rf.me] = rf.GetLatestLogIndex() + 1
 
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
