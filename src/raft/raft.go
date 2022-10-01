@@ -190,7 +190,10 @@ func (rf *Raft) GetLogIndex(index int) int {
 
 // use this function with lock
 func (rf *Raft) GetLatestLogRef() *Log {
-	return &rf.log[len(rf.log)-1]
+	if rf.LogLength() >= 1 {
+		return &rf.log[len(rf.log)-1]
+	}
+	return nil
 }
 
 // use this function with lock
@@ -439,7 +442,7 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 		}
 
 		lowest_commit_index := findTopK(rf.next_index, rf.quorum_number) - 1
-		if lowest_commit_index <= 0 || lowest_commit_index > rf.LogLength() {
+		if lowest_commit_index <= 0 || lowest_commit_index > rf.GetLatestLogRef().INDEX {
 			rf.mu.Unlock()
 			continue
 		}
@@ -461,17 +464,14 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		return
 	}
 
-	for i := rf.commit_index + 1; i <= new_commit_index; i++ {
-		if i > rf.LogLength() {
-			break
-		}
+	for idx := rf.commit_index + 1; idx <= new_commit_index && idx <= rf.LogLength(); idx++ {
 		tmp := ApplyMsg{
 			CommandValid: true,
-			Command:      rf.GetLogCommand(i),
-			CommandIndex: rf.GetLogIndex(i),
+			Command:      rf.GetLogCommand(idx),
+			CommandIndex: rf.GetLogIndex(idx),
 		}
 		rf.apply_ch <- tmp
-		rf.commit_index = i
+		rf.commit_index = idx
 		log.Printf("Server[%d] commit index %d", rf.me, tmp.CommandIndex)
 	}
 
@@ -492,7 +492,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		if rf.LogLength() >= 1 {
 			argi.PREV_LOG_INDEX = rf.GetLatestLogRef().INDEX
 		}
-		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= rf.LogLength() {
+		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= rf.GetLatestLogRef().INDEX {
 			argi.PREV_LOG_TERM = rf.GetLogTerm(argi.PREV_LOG_INDEX)
 		}
 		// don't send heart beat to myself
@@ -659,7 +659,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// I have newer log
-	if rf.LogLength() > 0 {
+	if rf.LogLength() >= 1 {
 		my_latest_log := rf.GetLatestLogRef()
 
 		if (my_latest_log.TERM != args.PREV_LOG_TERM) && (my_latest_log.TERM > args.PREV_LOG_TERM) {
@@ -717,7 +717,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// I have newer log
-	if rf.LogLength() > 0 {
+	if rf.LogLength() >= 1 {
 		my_latest_log := rf.GetLatestLogRef()
 
 		if (my_latest_log.TERM != args.PREV_LOG_TERM) && my_latest_log.TERM > args.PREV_LOG_TERM {
@@ -1276,7 +1276,7 @@ func (rf *Raft) newRoundAppend(command interface{}, index int) {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := None
+	new_log_index := None
 	term := None
 	isLeader := true
 
@@ -1286,23 +1286,28 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	// is not leader
 	if !rf.statusIs(LEADER) {
-		return index, term, false
+		return new_log_index, term, false
 	}
 	term = rf.current_term
 	isLeader = true
-	index = rf.LogLength() + 1
-	rf.next_index[rf.me] = index + 1
+	latest_log_index := 0
+	latest_log := rf.GetLatestLogRef()
+	if latest_log != nil {
+		latest_log_index = latest_log.INDEX
+	}
+	new_log_index = latest_log_index + 1
+	rf.next_index[rf.me] = new_log_index + 1
 	new_log := &Log{
-		INDEX:   index,
+		INDEX:   new_log_index,
 		TERM:    rf.current_term,
 		COMMAND: command,
 	}
 	rf.AppendLog(new_log)
-	go rf.newRoundAppend(command, index)
+	go rf.newRoundAppend(command, new_log_index)
 
 	log.Print("Server[", rf.me, "] Start accept new log:", new_log)
 
-	return index, term, isLeader
+	return new_log_index, term, isLeader
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -1384,7 +1389,12 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 // use this function when hold the lock
 func (rf *Raft) becomeLeader() {
 	rf.status = LEADER
-	rf.next_index[rf.me] = rf.LogLength()
+	latest_log_index := 0
+	latest_log := rf.GetLatestLogRef()
+	if latest_log != nil {
+		latest_log_index = latest_log.INDEX
+	}
+	rf.next_index[rf.me] = latest_log_index + 1
 
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
