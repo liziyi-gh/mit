@@ -168,6 +168,23 @@ type Raft struct {
 	enable_feature_prevote bool
 }
 
+// NOTE: start log function
+
+// use this function with lock
+func (rf *Raft) GetPositionByIndex(index int) (int, bool) {
+	for i := rf.LogLength() - 1; i >= 0; i-- {
+		if rf.log[i].INDEX == index {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// use this function with lock
+func (rf *Raft) GetIndexByPosition(position int) int {
+	return rf.log[position].INDEX
+}
+
 // use this function with lock
 func (rf *Raft) LogLength() int {
 	return len(rf.log)
@@ -225,20 +242,7 @@ func (rf *Raft) SliceLogToIndex(last_log_index int) bool {
 	return true
 }
 
-// use this function with lock
-func (rf *Raft) GetPositionByIndex(index int) (int, bool) {
-	for i := rf.LogLength() - 1; i >= 0; i-- {
-		if rf.log[i].INDEX == index {
-			return i, true
-		}
-	}
-	return 0, false
-}
-
-// use this function with lock
-func (rf *Raft) GetIndexByPosition(position int) int {
-	return rf.log[position].INDEX
-}
+// NOTE: end log function
 
 // use this function with lock
 func (rf *Raft) SetTerm(new_term int) bool {
