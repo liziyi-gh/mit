@@ -252,7 +252,7 @@ func (rf *Raft) AppendLogs(logs []Log) bool {
 
 // use this function with lock
 // remove all logs that index > last_log_index
-func (rf *Raft) SliceLogToIndex(last_log_index int) bool {
+func (rf *Raft) RemoveLogIndexGreaterThan(last_log_index int) bool {
 	reserve_logs_number := 0
 	for i := 0; i < rf.LogLength(); i++ {
 		if rf.log[i].INDEX == last_log_index {
@@ -604,7 +604,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 				not_same_index := iter_args_log.INDEX != iter_self_log_idx
 				dismatch := not_same_term || not_same_index
 				if dismatch {
-					rf.SliceLogToIndex(rf.GetIndexByPosition(iter_self_log_position - 1))
+					rf.RemoveLogIndexGreaterThan(rf.GetIndexByPosition(iter_self_log_position - 1))
 					goto there
 				}
 				iter_self_log_position++
@@ -615,7 +615,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		// prev log dismatched
 		if !matched {
 			if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
-				rf.SliceLogToIndex(0)
+				rf.RemoveLogIndexGreaterThan(0)
 			} else {
 				log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
 				rf.buildReplyForAppendEntryFailed(args, reply)
