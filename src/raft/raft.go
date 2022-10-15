@@ -447,6 +447,7 @@ type RequestAppendEntryReply struct {
 	// only valid when SUCCESS is false
 	// None if no log in this term
 	NEWST_LOG_INDEX_OF_PREV_LOG_TERM int
+	SNAPSHOT_REQUEST                 bool // follower want to install snapshot
 }
 
 func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
@@ -742,7 +743,16 @@ there:
 }
 
 func (rf *Raft) RequestAppendEntryWithSnapShot(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
-
+	oldest_log := args.ENTRIES[len(args.ENTRIES)-1]
+	if oldest_log.INDEX > rf.last_log_index_in_snapshot {
+		rf.RequestAppendEntryNoSnapShot(args, reply)
+		return
+	} else {
+		reply.SUCCESS = false
+		reply.TERM = rf.current_term
+		reply.SNAPSHOT_REQUEST = true
+		return
+	}
 }
 
 func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
@@ -1217,7 +1227,6 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 
 	// add logs from latest to prev_log_position to args
 	for i := initil_log_position; i > new_prev_log_position; i-- {
-		// FIXME: if can not see rf.log[i] anymore, install snapshot
 		new_entries = append(new_entries, rf.log[i])
 	}
 	args.ENTRIES = new_entries
