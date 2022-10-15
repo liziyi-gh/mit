@@ -151,6 +151,10 @@ type Raft struct {
 	match_index []int
 	status      int
 
+	// Snapshot
+	last_log_index_in_snapshot int
+	last_log_term_in_snapshot  int
+
 	// Convinence chanel
 	recently_commit   chan struct{}
 	append_entry_chan []chan struct{}
@@ -265,6 +269,21 @@ func (rf *Raft) RemoveLogIndexGreaterThan(last_log_index int) bool {
 	return true
 }
 
+// use this function with lock
+// remove all logs that index < last_log_index
+func (rf *Raft) RemoveLogIndexLessThan(last_log_index int) bool {
+	reserve_logs_number := 0
+	for i := 0; i < rf.LogLength(); i++ {
+		if rf.log[i].INDEX == last_log_index {
+			reserve_logs_number = i + 1
+			break
+		}
+	}
+	rf.log = rf.log[reserve_logs_number:]
+	rf.persist()
+	return true
+}
+
 // NOTE: end log function
 
 // use this function with lock
@@ -371,7 +390,10 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
-
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	log.Printf("Server[%d] Snapshot", rf.me)
+	rf.RemoveLogIndexLessThan(index + 1)
 }
 
 // example RequestVote RPC arguments structure.
@@ -400,6 +422,21 @@ type RequestAppendEntryArgs struct {
 	PREV_LOG_INDEX int
 	PREV_LOG_TERM  int
 	UUID           uint64
+}
+
+type RequestInstallSnapshotArgs struct {
+	TERM                int // leader's term
+	LEADER_ID           int // for follower redirect clients
+	LAST_INCLUDED_INDEX int
+	LAST_INCLUDED_TERM  int
+	OFFSET              int // not use
+	DATA                []byte
+	DONE                bool // not use
+	UUID                uint64
+}
+
+type RequestInstallSnapshotReply struct {
+	TERM int // current term, for leader to update itself
 }
 
 type RequestAppendEntryReply struct {
@@ -555,6 +592,42 @@ func (rf *Raft) sendHeartBeat(this_term int) {
 	}
 }
 
+func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *RequestInstallSnapshotReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	log.Println("liziyi: RequestInstallSnapshot")
+
+	reply.TERM = rf.current_term
+	if rf.current_term > args.TERM {
+		return
+	}
+
+	position, found_log_index := rf.GetPositionByIndex(args.LAST_INCLUDED_INDEX)
+	if found_log_index {
+		has_same_term := rf.log[position].TERM == args.LAST_INCLUDED_TERM
+		if has_same_term {
+			return
+		}
+	}
+
+	// discard the entire log
+	rf.RemoveLogIndexGreaterThan(0)
+
+	// restore state machine using snapshot contents,
+	// and load snapshot's cluster configuration
+	apply_msg := ApplyMsg{
+		SnapshotValid: true,
+		Snapshot:      args.DATA,
+		SnapshotTerm:  args.LAST_INCLUDED_TERM,
+		SnapshotIndex: args.LAST_INCLUDED_INDEX,
+	}
+	rf.apply_ch <- apply_msg
+	rf.last_log_term_in_snapshot = args.LAST_INCLUDED_TERM
+	rf.last_log_index_in_snapshot = args.LAST_INCLUDED_INDEX
+	rf.last_applied = args.LAST_INCLUDED_INDEX
+}
+
 func (rf *Raft) buildReplyForAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	found, index := findIndexOfFirstLogMatchedTerm(rf.log, args.PREV_LOG_TERM)
 	if !found {
@@ -625,6 +698,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	}
 there:
 
+	// if have no log, check snapshot
 	if len(append_logs) > 0 && !rf.HaveAnyLog() {
 		if args.PREV_LOG_INDEX != 0 || args.PREV_LOG_TERM != 0 {
 			log.Print("Server[", rf.me, "] append log to empty failed")
@@ -642,7 +716,7 @@ there:
 
 	// rpc call success
 	reply.SUCCESS = true
-	log.Println("Success append log UUID: ", args.UUID)
+	log.Println("Server[", rf.me, "]Success append log UUID: ", args.UUID)
 
 	for i, j := 0, len(append_logs)-1; i < j; i, j = i+1, j-1 {
 		append_logs[i], append_logs[j] = append_logs[j], append_logs[i]
