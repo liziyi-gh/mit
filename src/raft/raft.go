@@ -1364,8 +1364,10 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		// the append_entry_chan is just one time invoke, so need timer to
 		// append log continuously, otherwise it's too slow
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
+			// go rf.sendNewestLog(server, this_round_term, ch)
 			rf.sendNewestLog(server, this_round_term, ch)
 		case <-rf.append_entry_chan[server]:
+			// go rf.sendNewestLog(server, this_round_term, ch)
 			rf.sendNewestLog(server, this_round_term, ch)
 		}
 	}
