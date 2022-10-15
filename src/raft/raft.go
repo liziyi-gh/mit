@@ -1254,9 +1254,7 @@ func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
 	return args
 }
 
-func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
-	<-ch
-	defer func() { ch <- struct{}{} }()
+func (rf *Raft) sendNewestLog(server int, this_round_term int) {
 	rf.mu.Lock()
 
 	if rf.current_term != this_round_term {
@@ -1340,11 +1338,6 @@ end:
 
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 	defer log.Print("Server[", server, "] quit handleAppendEntryForOneServer")
-	worker_number := 3
-	ch := make(chan struct{}, worker_number)
-	for i := 0; i < worker_number; i++ {
-		ch <- struct{}{}
-	}
 
 	for {
 		if rf.killed() {
@@ -1364,9 +1357,9 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		// the append_entry_chan is just one time invoke, so need timer to
 		// append log continuously, otherwise it's too slow
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
-			rf.sendNewestLog(server, this_round_term, ch)
+			rf.sendNewestLog(server, this_round_term)
 		case <-rf.append_entry_chan[server]:
-			rf.sendNewestLog(server, this_round_term, ch)
+			rf.sendNewestLog(server, this_round_term)
 		}
 	}
 
