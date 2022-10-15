@@ -19,6 +19,7 @@ package raft
 
 import (
 	"bytes"
+	"strconv"
 
 	"log"
 	"math/rand"
@@ -596,7 +597,7 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	log.Println("liziyi: RequestInstallSnapshot")
+	log.Printf("Server[%d] install snapshot from [%d]", rf.me, args.LEADER_ID)
 
 	reply.TERM = rf.current_term
 	if rf.current_term > args.TERM {
@@ -1573,8 +1574,8 @@ func (rf *Raft) ticker() {
 	}
 }
 
-func initLogSetting() {
-	file, err := os.OpenFile("/tmp/tmp-fs/raft.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
+func initLogSetting(me int) {
+	file, err := os.OpenFile("/tmp/tmp-fs/raftserver"+strconv.Itoa(me)+".log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -1600,7 +1601,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
-	initLogSetting()
+	initLogSetting(me)
 
 	rf.mu.Lock()
 
