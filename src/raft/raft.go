@@ -1295,6 +1295,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		reply := &RequestAppendEntryReply{}
 		ok := rf.sendOneAppendEntry(server, args, reply)
 		rf.mu.Lock()
+		// FIXME: if failed times too much or other situation, install snapshot
 		if !ok {
 			goto end
 		}
@@ -1537,7 +1538,6 @@ func (rf *Raft) ticker() {
 		log.Printf("Server[%d] ticker: new wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
-		// log.Print("Server[", rf.me, "] goroutine number is ", runtime.NumGoroutine())
 
 		rf.mu.Lock()
 
