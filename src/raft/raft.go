@@ -637,10 +637,7 @@ func (rf *Raft) buildReplyForAppendEntryFailed(args *RequestAppendEntryArgs, rep
 	reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM = index
 }
 
-func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
+func (rf *Raft) RequestAppendEntryNoSnapShot(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	reply.SUCCESS = false
 	reply.TERM = rf.current_term
 	reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM = None
@@ -741,6 +738,23 @@ there:
 	}
 
 	return
+}
+
+func (rf *Raft) RequestAppendEntryWithSnapShot(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
+
+}
+
+func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.last_log_index_in_snapshot == 0 {
+		rf.RequestAppendEntryNoSnapShot(args, reply)
+		return
+	} else {
+		rf.RequestAppendEntryWithSnapShot(args, reply)
+		return
+	}
 }
 
 func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
