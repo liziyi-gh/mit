@@ -20,7 +20,8 @@ do
     # go test -run TestCount2B -race > ${TESTER_LOG_FILE}
     # go test -run TestBackup2B -race > ${TESTER_LOG_FILE}
     # go test -run TestFigure82C -race > ${TESTER_LOG_FILE}
-    go test -run TestFigure8Unreliable2C -race > ${TESTER_LOG_FILE}
+    # go test -run TestFigure8Unreliable2C -race > ${TESTER_LOG_FILE}
+    go test -run TestSnapshotBasic2D -race > ${TESTER_LOG_FILE}
 
     tmp=$(rg FAIL ${TESTER_LOG_FILE})
     tmp2=$(rg "DATA RACE" ${TESTER_LOG_FILE})
