@@ -206,7 +206,10 @@ func (rf *Raft) GetLogTermByIndex(index int) int {
 
 // use this function with lock
 func (rf *Raft) GetLogCommandByIndex(index int) interface{} {
-	position, _ := rf.GetPositionByIndex(index)
+	position, ok := rf.GetPositionByIndex(index)
+	if !ok {
+		log.Printf("Server[%d] get command by index failed", rf.me)
+	}
 	return rf.log[position].COMMAND
 }
 
@@ -395,7 +398,11 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.snapshot_data = snapshot
 	rf.last_log_index_in_snapshot = index
 	rf.last_log_term_in_snapshot = rf.GetLogTermByIndex(index)
+	log.Printf("Server[%d] have log before Snapshot", rf.me)
+	log.Println(rf.log)
 	rf.RemoveLogIndexLessThan(index + 1)
+	log.Printf("Server[%d] have log after Snapshot", rf.me)
+	log.Println(rf.log)
 }
 
 func (rf *Raft) HasSnapshot() bool {
@@ -571,6 +578,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 			continue
 		}
 		go rf.sendOneAppendEntry(i, argi, &reply[i])
+		log.Printf("Server[%d] new round heart beat", rf.me)
 	}
 }
 
@@ -1229,7 +1237,13 @@ func (rf *Raft) __successAppend(server int, this_round_term int,
 	log.Println("__successAppend handle args : ", args)
 
 	if server != rf.me {
-		new_next_index := args.PREV_LOG_INDEX + len(args.ENTRIES) + 1
+		newest_index_in_args := 0
+		for _, value := range args.ENTRIES {
+			if value.INDEX > newest_index_in_args {
+				newest_index_in_args = value.INDEX
+			}
+		}
+		new_next_index := newest_index_in_args + 1
 		if new_next_index > rf.next_index[server] {
 			log.Print("leader update next index for Server[", server, "] , new next index is ", new_next_index)
 			rf.next_index[server] = new_next_index
