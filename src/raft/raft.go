@@ -1396,11 +1396,11 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		}
 
 		if reply.SUCCESS {
+			rf.__successAppend(server, this_round_term, args)
 			goto end
 		}
 
 		if reply.SNAPSHOT_REQUEST {
-			log.Printf("need snapshot")
 			rf.sendSnapshot(server)
 			continue
 		}
