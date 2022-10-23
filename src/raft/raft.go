@@ -724,7 +724,7 @@ there:
 func (rf *Raft) AppendEntryWithSnapShot(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	append_logs := []Log{}
 
-	for i := len(args.ENTRIES); i >= 0; i-- {
+	for i := len(args.ENTRIES) - 1; i >= 0; i-- {
 		iter_log := args.ENTRIES[i]
 		if iter_log.INDEX == rf.last_log_index_in_snapshot && iter_log.TERM != rf.last_log_term_in_snapshot {
 			reply.SNAPSHOT_REQUEST = true
