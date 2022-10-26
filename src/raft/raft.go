@@ -160,9 +160,10 @@ type Raft struct {
 	snapshot_data              []byte
 
 	// Convinence chanel
-	recently_commit   chan struct{}
-	append_entry_chan []chan struct{}
-	apply_ch          chan ApplyMsg
+	recently_commit     chan struct{}
+	append_entry_chan   []chan struct{}
+	apply_ch            chan ApplyMsg
+	internal_apply_chan chan ApplyMsg
 
 	// Convinence constants
 	all_server_number      int
@@ -205,12 +206,13 @@ func (rf *Raft) GetLogTermByIndex(index int) int {
 }
 
 // use this function with lock
-func (rf *Raft) GetLogCommandByIndex(index int) interface{} {
+func (rf *Raft) GetLogCommandByIndex(index int) (interface{}, bool) {
 	position, ok := rf.GetPositionByIndex(index)
 	if !ok {
 		log.Printf("Server[%d] get command by index failed", rf.me)
+		return struct{}{}, false
 	}
-	return rf.log[position].COMMAND
+	return rf.log[position].COMMAND, true
 }
 
 // use this function with lock
@@ -392,9 +394,10 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
+	// FIXME: this snapshot call by applier function
+	// how to promise this hold the lock?
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("Server[%d] Snapshot", rf.me)
 	rf.snapshot_data = snapshot
 	rf.last_log_index_in_snapshot = index
 	rf.last_log_term_in_snapshot = rf.GetLogTermByIndex(index)
@@ -536,23 +539,42 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 	}
 }
 
-// use this function with lock
 func (rf *Raft) updateCommitIndex(new_commit_index int) {
 	if new_commit_index <= rf.commit_index {
 		return
 	}
 
 	for idx := rf.commit_index + 1; idx <= new_commit_index && idx <= rf.GetLatestLogIndex(); idx++ {
+		command, ok := rf.GetLogCommandByIndex(idx)
+		if !ok {
+			return
+		}
 		tmp := ApplyMsg{
 			CommandValid: true,
-			Command:      rf.GetLogCommandByIndex(idx),
+			Command:      command,
 			CommandIndex: idx,
 		}
-		rf.apply_ch <- tmp
-		rf.commit_index = idx
-		log.Printf("Server[%d] commit index %d", rf.me, tmp.CommandIndex)
+		log.Printf("Server[%d] send index %d to internal channel", rf.me, tmp.CommandIndex)
+		rf.internal_apply_chan <- tmp
 	}
 
+}
+
+func (rf *Raft) sendCommandToApplierFunction() {
+	for {
+		new_command := <-rf.internal_apply_chan
+		log.Printf("Server[%d] get new command index %d", rf.me, new_command.CommandIndex)
+		rf.mu.Lock()
+		if new_command.CommandIndex > rf.commit_index {
+			log.Printf("Server[%d] going to commit index %d", rf.me, new_command.CommandIndex)
+			rf.mu.Unlock()
+			rf.apply_ch <- new_command
+			log.Printf("Server[%d] commit index %d", rf.me, new_command.CommandIndex)
+			rf.mu.Lock()
+			rf.commit_index = new_command.CommandIndex
+		}
+		rf.mu.Unlock()
+	}
 }
 
 // use this function with lock
@@ -1234,6 +1256,8 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 // use this function when hold lock
 func (rf *Raft) __successAppend(server int, this_round_term int,
 	args *RequestAppendEntryArgs) {
+	log.Printf("Server[%d] enter __successAppend", rf.me)
+	defer log.Printf("Server[%d] quit __successAppend", rf.me)
 	log.Println("__successAppend handle args : ", args)
 
 	if server != rf.me {
@@ -1295,22 +1319,9 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailedNoSnapShot(args *RequestAppendE
 	}
 }
 
-func (rf *Raft) backwardArgsWhenAppendEntryFailedWithSnapShot(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
-	ok, _ := findLastIndexbeforeTerm(rf.log, args.PREV_LOG_TERM)
-	if ok {
-		rf.backwardArgsWhenAppendEntryFailedNoSnapShot(args, reply)
-		return
-	}
-	args.TERM = rf.current_term
-	args.LEADER_ID = rf.me
-	args.LEADER_COMMIT = rf.commit_index
-	args.ENTRIES = rf.log
-	args.PREV_LOG_TERM = rf.last_log_term_in_snapshot
-	args.PREV_LOG_INDEX = rf.last_log_index_in_snapshot
-}
-
 // use with the lock
 func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
+	// TODO: reduce rpc number, from latest_log to next_index
 	latest_log := *rf.GetLatestLogRef()
 	append_logs := []Log{latest_log}
 	prev_log_index := latest_log.INDEX - 1
@@ -1332,6 +1343,8 @@ func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
 }
 
 func (rf *Raft) sendSnapshot(server int) bool {
+	log.Printf("Server[%d] enter sendSnapshot", rf.me)
+	defer log.Printf("Server[%d] quit sendSnapshot", rf.me)
 	args := RequestInstallSnapshotArgs{
 		TERM:                rf.current_term,
 		LEADER_ID:           rf.me,
@@ -1339,6 +1352,7 @@ func (rf *Raft) sendSnapshot(server int) bool {
 		LAST_INCLUDED_TERM:  rf.last_log_term_in_snapshot,
 		DATA:                rf.snapshot_data,
 	}
+	// FIXME: not in the same place hold and release lock!
 	rf.mu.Unlock()
 	reply := RequestAppendEntryReply{}
 	ok := rf.peers[server].Call("Raft.RequestInstallSnapshot", args, reply)
@@ -1346,6 +1360,8 @@ func (rf *Raft) sendSnapshot(server int) bool {
 }
 
 func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
+	log.Printf("Server[%d] enter sendNewestLog", rf.me)
+	defer log.Printf("Server[%d] quit sendNewestLog", rf.me)
 	<-ch
 	defer func() { ch <- struct{}{} }()
 	rf.mu.Lock()
@@ -1362,7 +1378,6 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		return
 	}
 
-	// TODO: reduce rpc number, from latest_log to next_index
 	args := rf.buildNewestArgs()
 	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for server", server, "args is ", args)
 	failed_times := 0
@@ -1396,11 +1411,18 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		}
 
 		if reply.SUCCESS {
+			// FIXME: why can not delete this success append?
+			// something about the lock? it's not happen every time.
 			rf.__successAppend(server, this_round_term, args)
 			goto end
 		}
 
 		if reply.SNAPSHOT_REQUEST {
+			rf.sendSnapshot(server)
+			continue
+		}
+
+		if rf.next_index[server] <= rf.last_log_index_in_snapshot {
 			rf.sendSnapshot(server)
 			continue
 		}
@@ -1422,11 +1444,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 			goto end
 		}
 
-		if rf.HasSnapshot() {
-			rf.backwardArgsWhenAppendEntryFailedWithSnapShot(args, reply)
-		} else {
-			rf.backwardArgsWhenAppendEntryFailedNoSnapShot(args, reply)
-		}
+		rf.backwardArgsWhenAppendEntryFailedNoSnapShot(args, reply)
 		log.Print("Server[", server, "] log dismatch, new args is ", args)
 
 		rf.mu.Unlock()
@@ -1438,6 +1456,7 @@ end:
 }
 
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
+	log.Printf("Server[%d] enter handleAppendEntryForOneServer", rf.me)
 	defer log.Print("Server[", server, "] quit handleAppendEntryForOneServer")
 	worker_number := 3
 	ch := make(chan struct{}, worker_number)
@@ -1600,6 +1619,7 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 // use this function when hold the lock
 func (rf *Raft) becomeLeader() {
 	rf.status = LEADER
+	// FIXME:
 	rf.next_index[rf.me] = rf.GetLatestLogIndex() + 1
 
 	// NOTE: send heartbeat ASAP
@@ -1676,7 +1696,6 @@ func (rf *Raft) ticker() {
 }
 
 func initLogSetting(me int) {
-	// file, err := os.OpenFile("/tmp/tmp-fs/raftserver"+strconv.Itoa(me)+".log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
 	file, err := os.OpenFile("/tmp/tmp-fs/raft.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
 	if err != nil {
 		log.Fatal(err)
@@ -1721,6 +1740,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.chanel_buffer_size = 1000
 
 	rf.recently_commit = make(chan struct{}, rf.chanel_buffer_size)
+	rf.internal_apply_chan = make(chan ApplyMsg, rf.chanel_buffer_size)
 	rf.append_entry_chan = make([]chan struct{}, rf.all_server_number)
 	rf.apply_ch = applyCh
 	rf.rpc_retry_times = 1
@@ -1733,10 +1753,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		rf.append_entry_chan[i] = make(chan struct{}, rf.chanel_buffer_size)
 	}
 
-	rf.mu.Unlock()
+	go rf.sendCommandToApplierFunction()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+
+	rf.mu.Unlock()
 
 	// start ticker goroutine to start elections
 	go rf.ticker()

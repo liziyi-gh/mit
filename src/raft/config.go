@@ -218,6 +218,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	}
 
 	for m := range applyCh {
+		fmt.Printf("server %v going to apply %v\n", i, m.CommandIndex)
 		err_msg := ""
 		if m.SnapshotValid {
 			if rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
@@ -264,16 +265,15 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 			// keep reading after error so that Raft doesn't block
 			// holding locks...
 		}
+		fmt.Printf("server %v apply %v\n", i, m.CommandIndex)
 	}
 }
 
-//
 // start or re-start a Raft.
 // if one already exists, "kill" it first.
 // allocate new outgoing port file names, and a new
 // state persister, to isolate previous instance of
 // this server. since we cannot really kill it.
-//
 func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	cfg.crash1(i)
 
