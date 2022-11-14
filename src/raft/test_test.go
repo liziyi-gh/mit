@@ -1286,11 +1286,9 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 	defer cfg.cleanup()
 
 	cfg.begin(name)
-	cfg.t.Log("liziyi")
 
 	cfg.one(rand.Int(), servers, true)
 	leader1 := cfg.checkOneLeader()
-	cfg.t.Log("checked leader")
 
 	for i := 0; i < iters; i++ {
 		victim := (leader1 + 1) % servers
@@ -1312,17 +1310,14 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		// perhaps send enough to get a snapshot
 		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
 		for i := 0; i < nn; i++ {
-			cfg.t.Log(i)
 			cfg.rafts[sender].Start(rand.Int())
 		}
-		cfg.t.Log("Done all start")
 
 		// let applier threads catch up with the Start()'s
 		if disconnect == false && crash == false {
 			// make sure all followers have caught up, so that
 			// an InstallSnapshot RPC isn't required for
 			// TestSnapshotBasic2D().
-			cfg.t.Log("Trying get agreement")
 			cfg.one(rand.Int(), servers, true)
 		} else {
 			cfg.one(rand.Int(), servers-1, true)

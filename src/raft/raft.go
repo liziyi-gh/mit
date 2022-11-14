@@ -529,6 +529,7 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 		}
 
 		// NOTE: prevent counting number to commit previous term's log
+		// FIXME: with snapshot, this line is error
 		if rf.GetLogTermByIndex(lowest_commit_index) != current_term {
 			rf.mu.Unlock()
 			continue
@@ -1256,9 +1257,9 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 // use this function when hold lock
 func (rf *Raft) __successAppend(server int, this_round_term int,
 	args *RequestAppendEntryArgs) {
-	log.Printf("Server[%d] enter __successAppend", rf.me)
-	defer log.Printf("Server[%d] quit __successAppend", rf.me)
-	log.Println("__successAppend handle args : ", args)
+	log.Printf("Server[%d] enter __successAppend for %d", rf.me, server)
+	defer log.Printf("Server[%d] quit __successAppend for %d", rf.me, server)
+	log.Println("__successAppend for ", server, "  handle args : ", args)
 
 	if server != rf.me {
 		newest_index_in_args := 0
@@ -1482,10 +1483,8 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		// the append_entry_chan is just one time invoke, so need timer to
 		// append log continuously, otherwise it's too slow
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
-			// go rf.sendNewestLog(server, this_round_term, ch)
 			rf.sendNewestLog(server, this_round_term, ch)
 		case <-rf.append_entry_chan[server]:
-			// go rf.sendNewestLog(server, this_round_term, ch)
 			rf.sendNewestLog(server, this_round_term, ch)
 		}
 	}
