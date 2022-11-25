@@ -209,7 +209,7 @@ func (rf *Raft) GetLogTermByIndex(index int) int {
 func (rf *Raft) GetLogCommandByIndex(index int) (interface{}, bool) {
 	position, ok := rf.GetPositionByIndex(index)
 	if !ok {
-		log.Printf("Server[%d] get command by index failed", rf.me)
+		log.Printf("Server[%d] get command by index [%d] failed", rf.me, index)
 		return struct{}{}, false
 	}
 	return rf.log[position].COMMAND, true
@@ -276,14 +276,14 @@ func (rf *Raft) RemoveLogIndexGreaterThan(last_log_index int) bool {
 // use this function with lock
 // remove all logs that index < last_log_index
 func (rf *Raft) RemoveLogIndexLessThan(last_log_index int) bool {
-	reserve_logs_number := 0
+	reserve_logs_position := 0
 	for i := 0; i < rf.LogLength(); i++ {
 		if rf.log[i].INDEX == last_log_index {
-			reserve_logs_number = i + 1
+			reserve_logs_position = i
 			break
 		}
 	}
-	rf.log = rf.log[reserve_logs_number:]
+	rf.log = rf.log[reserve_logs_position:]
 	rf.persist()
 	return true
 }
@@ -388,24 +388,25 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	return true
 }
 
+func (rf *Raft) doSnapshot(index int, snapshot []byte) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.snapshot_data = snapshot
+	rf.last_log_index_in_snapshot = index
+	rf.last_log_term_in_snapshot = rf.GetLogTermByIndex(index)
+	log.Println("Server[", rf.me, "] Snapshot index is ", index)
+	log.Println("Server[", rf.me, "] have log before Snapshot", rf.log)
+	rf.RemoveLogIndexLessThan(index + 1)
+	log.Println("Server[", rf.me, "] have log after Snapshot", rf.log)
+}
+
 // the service says it has created a snapshot that has
 // all info up to and including index. this means the
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
-	// FIXME: this snapshot call by applier function
-	// how to promise this hold the lock?
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	rf.snapshot_data = snapshot
-	rf.last_log_index_in_snapshot = index
-	rf.last_log_term_in_snapshot = rf.GetLogTermByIndex(index)
-	log.Printf("Server[%d] have log before Snapshot", rf.me)
-	log.Println(rf.log)
-	rf.RemoveLogIndexLessThan(index + 1)
-	log.Printf("Server[%d] have log after Snapshot", rf.me)
-	log.Println(rf.log)
+	go rf.doSnapshot(index, snapshot)
 }
 
 func (rf *Raft) HasSnapshot() bool {
@@ -1618,8 +1619,11 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 // use this function when hold the lock
 func (rf *Raft) becomeLeader() {
 	rf.status = LEADER
-	// FIXME:
-	rf.next_index[rf.me] = rf.GetLatestLogIndex() + 1
+	if rf.GetLatestLogIndex() > rf.last_log_index_in_snapshot {
+		rf.next_index[rf.me] = rf.GetLatestLogIndex() + 1
+	} else {
+		rf.next_index[rf.me] = rf.last_log_index_in_snapshot
+	}
 
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
