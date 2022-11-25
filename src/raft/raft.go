@@ -749,32 +749,6 @@ there:
 	return
 }
 
-func (rf *Raft) AppendEntryWithSnapShot(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
-	append_logs := []Log{}
-	log.Println("Server[", rf.me, "]AppendEntryWithSnapShot")
-
-	for i := len(args.ENTRIES) - 1; i >= 0; i-- {
-		iter_log := args.ENTRIES[i]
-		if iter_log.INDEX == rf.last_log_index_in_snapshot && iter_log.TERM != rf.last_log_term_in_snapshot {
-			reply.SNAPSHOT_REQUEST = true
-			return
-		}
-		append_logs = append(append_logs, args.ENTRIES[i])
-	}
-
-	reply.SUCCESS = true
-	for i, j := 0, len(append_logs)-1; i < j; i, j = i+1, j-1 {
-		append_logs[i], append_logs[j] = append_logs[j], append_logs[i]
-	}
-
-	rf.AppendLogs(append_logs)
-	if len(append_logs) > 0 {
-		log.Print("Server[", rf.me, "] new log is:", rf.log)
-	}
-
-	return
-}
-
 func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
