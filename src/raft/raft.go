@@ -468,6 +468,8 @@ type RequestAppendEntryReply struct {
 	// None if no log in this term
 	NEWST_LOG_INDEX_OF_PREV_LOG_TERM int
 	SNAPSHOT_REQUEST                 bool // follower want to install snapshot
+	LAST_LOG_INDEX_IN_SNAPSHOT       int
+	LAST_LOG_TERM_IN_SNAPSHOT        int
 }
 
 func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
@@ -502,7 +504,7 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 
 			// maybe response lost, so need send signal
 			if reply.SUCCESS {
-				rf.__successAppend(server, args.TERM, args)
+				rf.successAppend(server, args.TERM, args)
 			}
 		}
 		rf.mu.Unlock()
@@ -606,7 +608,6 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 			continue
 		}
 		go rf.sendOneAppendEntry(i, argi, &reply[i])
-		log.Printf("Server[%d] new round heart beat", rf.me)
 	}
 }
 
@@ -755,6 +756,8 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	reply.SUCCESS = false
 	reply.TERM = rf.current_term
 	reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM = None
+	reply.LAST_LOG_TERM_IN_SNAPSHOT = rf.last_log_term_in_snapshot
+	reply.LAST_LOG_INDEX_IN_SNAPSHOT = rf.last_log_index_in_snapshot
 	if args.TERM < rf.current_term {
 		log.Printf("Server[%d] reject Append Entry RPC from server[%d]", rf.me, args.LEADER_ID)
 		return
@@ -1227,11 +1230,9 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 }
 
 // use this function when hold lock
-func (rf *Raft) __successAppend(server int, this_round_term int,
+func (rf *Raft) successAppend(server int, this_round_term int,
 	args *RequestAppendEntryArgs) {
-	log.Printf("Server[%d] enter __successAppend for %d", rf.me, server)
-	defer log.Printf("Server[%d] quit __successAppend for %d", rf.me, server)
-	log.Println("__successAppend for ", server, "  handle args : ", args)
+	log.Println("successAppend for ", server, "  handle args : ", args)
 
 	if server != rf.me {
 		newest_index_in_args := 0
@@ -1315,9 +1316,7 @@ func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
 	return args
 }
 
-func (rf *Raft) sendSnapshot(server int) bool {
-	log.Printf("Server[%d] enter sendSnapshot", rf.me)
-	defer log.Printf("Server[%d] quit sendSnapshot", rf.me)
+func (rf *Raft) sendSnapshotOnetime(server int) bool {
 	args := RequestInstallSnapshotArgs{
 		TERM:                rf.current_term,
 		LEADER_ID:           rf.me,
@@ -1325,16 +1324,18 @@ func (rf *Raft) sendSnapshot(server int) bool {
 		LAST_INCLUDED_TERM:  rf.last_log_term_in_snapshot,
 		DATA:                rf.snapshot_data,
 	}
-	// FIXME: not in the same place hold and release lock!
+	// TODO: not in the same place hold and release lock!
 	rf.mu.Unlock()
 	reply := RequestAppendEntryReply{}
 	ok := rf.peers[server].Call("Raft.RequestInstallSnapshot", args, reply)
 	return ok
 }
 
+func (rf *Raft) sendSnapshot(server int, this_round_term int) {
+	// FIXME:
+}
+
 func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
-	log.Printf("Server[%d] enter sendNewestLog", rf.me)
-	defer log.Printf("Server[%d] quit sendNewestLog", rf.me)
 	<-ch
 	defer func() { ch <- struct{}{} }()
 	rf.mu.Lock()
@@ -1344,7 +1345,6 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		return
 	}
 
-	log.Print("Server[", rf.me, "] rf.next_index is ", rf.next_index)
 	// NOTE: if use as heartbeat, delete this
 	if !rf.HaveAnyLog() {
 		rf.mu.Unlock()
@@ -1364,7 +1364,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 	}
 
 	if server == rf.me {
-		rf.__successAppend(server, this_round_term, args)
+		rf.successAppend(server, this_round_term, args)
 		goto end
 	}
 	rf.mu.Unlock()
@@ -1384,25 +1384,11 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		}
 
 		if reply.SUCCESS {
-			// FIXME: why can not delete this success append?
+			// TODO: why can not delete this success append?
 			// something about the lock? it's not happen every time.
-			rf.__successAppend(server, this_round_term, args)
+			rf.successAppend(server, this_round_term, args)
 			goto end
 		}
-
-		if reply.SNAPSHOT_REQUEST {
-			rf.sendSnapshot(server)
-			continue
-		}
-
-		if rf.next_index[server] <= rf.last_log_index_in_snapshot {
-			rf.sendSnapshot(server)
-			continue
-		}
-
-		// reply is false
-		failed_times++
-		log.Print("Server[", server, "] failed time: ", failed_times, ", args is ", args)
 
 		// new term case 2, know from peer
 		if reply.TERM > rf.current_term {
@@ -1410,17 +1396,28 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 			goto end
 		}
 
-		// log not match
-		log.Print("Server[", server, "] log dismatch, args is ", args)
+		// reply is false
+		failed_times++
+		log.Print("Server[", server, "] failed time: ", failed_times, ", args is ", args)
 
-		if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
-			goto end
+		need_snapshot := rf.next_index[server] <= rf.last_log_index_in_snapshot
+
+		if need_snapshot {
+			// go send snapshot
+			rf.mu.Unlock()
+			rf.sendSnapshot(server, this_round_term)
+			return
+		} else {
+			// log not match
+			if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
+				goto end
+			}
+			rf.backwardArgsWhenAppendEntryFailed(args, reply)
+			log.Print("Server[", server, "] log dismatch, new args is ", args)
+			rf.mu.Unlock()
+			continue
 		}
-
-		rf.backwardArgsWhenAppendEntryFailed(args, reply)
-		log.Print("Server[", server, "] log dismatch, new args is ", args)
-
-		rf.mu.Unlock()
+		// lock has been release here, no code below
 	} // end reply false for
 
 end:
@@ -1593,7 +1590,7 @@ func (rf *Raft) becomeLeader() {
 	if rf.GetLatestLogIndex() > rf.last_log_index_in_snapshot {
 		rf.next_index[rf.me] = rf.GetLatestLogIndex() + 1
 	} else {
-		rf.next_index[rf.me] = rf.last_log_index_in_snapshot
+		rf.next_index[rf.me] = rf.last_log_index_in_snapshot + 1
 	}
 
 	// NOTE: send heartbeat ASAP
