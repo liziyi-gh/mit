@@ -1315,17 +1315,40 @@ func (rf *Raft) sendSnapshotOnetime(server int, args *RequestInstallSnapshotArgs
 }
 
 func (rf *Raft) sendSnapshot(server int, this_round_term int) {
-	// // FIXME: implement this function
-	// args := &RequestInstallSnapshotArgs{
-	// 	TERM:                rf.current_term,
-	// 	LEADER_ID:           rf.me,
-	// 	LAST_INCLUDED_INDEX: rf.last_log_index_in_snapshot,
-	// 	LAST_INCLUDED_TERM:  rf.last_log_term_in_snapshot,
-	// 	DATA:                rf.snapshot_data,
-	// }
-	// reply := &RequestInstallSnapshotReply{}
-	// rf.sendSnapshotOnetime(server, args, reply)
-	log.Println("LEADER should send snapshot to Server", server)
+	rf.mu.Lock()
+	args := &RequestInstallSnapshotArgs{
+		TERM:                rf.current_term,
+		LEADER_ID:           rf.me,
+		LAST_INCLUDED_INDEX: rf.last_log_index_in_snapshot,
+		LAST_INCLUDED_TERM:  rf.last_log_term_in_snapshot,
+		DATA:                rf.snapshot_data,
+	}
+	reply := &RequestInstallSnapshotReply{}
+	rf.mu.Unlock()
+
+	for failed_times := 0; failed_times < rf.rpc_retry_times; failed_times++ {
+		ok := rf.sendSnapshotOnetime(server, args, reply)
+		rf.mu.Lock()
+		if rf.current_term != this_round_term {
+			goto release_lock_and_return
+		}
+		if reply.TERM > this_round_term {
+			goto release_lock_and_return
+		}
+		if ok {
+			rf.next_index[server] = args.LAST_INCLUDED_INDEX + 1
+			log.Println("LEADER", rf.me, "send snapshot to Server", server)
+			goto release_lock_and_return
+		}
+		rf.mu.Unlock()
+	}
+
+	log.Println("LEADER", rf.me, "failed send snapshot to Server", server)
+	return
+
+release_lock_and_return:
+	rf.mu.Unlock()
+	return
 }
 
 func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
@@ -1397,7 +1420,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 
 		if need_snapshot {
 			rf.mu.Unlock()
-			go rf.sendSnapshot(server, this_round_term)
+			rf.sendSnapshot(server, this_round_term)
 			return
 		} else {
 			// log not match
