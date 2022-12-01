@@ -488,10 +488,6 @@ func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply 
 }
 
 func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
-	if len(args.ENTRIES) != 0 {
-		log.Printf("Server[%d] send new append entry RPC to %d", rf.me, server)
-		defer log.Printf("Server[%d] send new append entry RPC to %d DONE", rf.me, server)
-	}
 	ok := rf.sendAppendEntry(server, args, reply)
 	failed_times := 0
 	for !ok {
@@ -499,12 +495,14 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 			log.Print("Server[", rf.me, "] send append entry failed too many times ", failed_times, " to server ", server, "return")
 			return false
 		}
+
 		rf.mu.Lock()
 		if rf.current_term > args.TERM {
 			rf.mu.Unlock()
 			return false
 		}
 		rf.mu.Unlock()
+
 		ok = rf.sendAppendEntry(server, args, reply)
 		rf.mu.Lock()
 		if ok {
@@ -621,20 +619,17 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 func (rf *Raft) sendHeartBeat(this_term int) {
 	for {
 		if rf.killed() {
-			log.Printf("one gorountine DONE")
 			return
 		}
 		time.Sleep(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond)
 		rf.mu.Lock()
 		if !rf.statusIs(LEADER) {
 			rf.mu.Unlock()
-			log.Printf("Server[%d] quit send heart beat, no longer leader", rf.me)
 			return
 		}
 
 		if rf.current_term != this_term {
 			rf.mu.Unlock()
-			log.Printf("Server[%d] quit send heart beat, new term", rf.me)
 			return
 		}
 
@@ -968,20 +963,14 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 		args.PREV_LOG_INDEX = -1
 	}
 	rf.mu.Unlock()
-	failed_times := 0
 
-	for {
+	for failed_times := 0; failed_times < rf.rpc_retry_times; failed_times++ {
 		if rf.killed() {
-			log.Printf("one gorountine DONE")
-			return
-		}
-		ok := false
-		if failed_times > rf.rpc_retry_times {
 			return
 		}
 
 		rf.mu.Lock()
-		if rf.current_term != args.TERM {
+		if rf.current_term != this_round_term {
 			rf.mu.Unlock()
 			log.Printf("Server[%d] quit requestOneServerVote for Server[%d], because new term", rf.me, index)
 			return
@@ -992,10 +981,10 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 			return
 		}
 		rf.mu.Unlock()
-		ok = rf.sendRequestVote(index, args, reply)
+
+		ok := rf.sendRequestVote(index, args, reply)
 
 		if !ok {
-			failed_times++
 			time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
 			continue
 		}
@@ -1007,8 +996,8 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 		}
 		rf.mu.Unlock()
 		return
-
 	}
+	return
 }
 
 func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, this_round_term int) {
@@ -1095,7 +1084,6 @@ func (rf *Raft) newVote(this_round_term int) {
 
 	for {
 		if rf.killed() {
-			log.Printf("one gorountine DONE")
 			return
 		}
 
