@@ -146,8 +146,9 @@ type Raft struct {
 	log          []Log
 
 	// Volatile on all servers
-	commit_index int
-	last_applied int
+	commit_index           int
+	last_applied           int
+	commit_index_in_quorom int
 
 	// Volatile on leaders
 	next_index  []int
@@ -401,7 +402,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.commit_index < index {
+	if rf.commit_index_in_quorom < index {
 		log.Println("Server[", rf.me, "] give up Snapshot, some log not commit")
 		return
 	}
@@ -477,7 +478,6 @@ type RequestAppendEntryReply struct {
 	// only valid when SUCCESS is false
 	// None if no log in this term
 	NEWST_LOG_INDEX_OF_PREV_LOG_TERM int
-	SNAPSHOT_REQUEST                 bool // follower want to install snapshot
 	LAST_LOG_INDEX_IN_SNAPSHOT       int
 	LAST_LOG_TERM_IN_SNAPSHOT        int
 }
@@ -544,7 +544,6 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 		}
 
 		// NOTE: prevent counting number to commit previous term's log
-		// FIXME: with snapshot, this line is error
 		lowest_commit_term := rf.GetLogTermByIndex(lowest_commit_index)
 		if lowest_commit_term != current_term {
 			rf.mu.Unlock()
@@ -573,6 +572,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		}
 		log.Printf("Server[%d] send index %d to internal channel", rf.me, tmp.CommandIndex)
 		rf.internal_apply_chan <- tmp
+		rf.commit_index_in_quorom = idx
 	}
 
 }
@@ -1311,23 +1311,23 @@ func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
 	return args
 }
 
-func (rf *Raft) sendSnapshotOnetime(server int) bool {
-	args := RequestInstallSnapshotArgs{
-		TERM:                rf.current_term,
-		LEADER_ID:           rf.me,
-		LAST_INCLUDED_INDEX: rf.last_log_index_in_snapshot,
-		LAST_INCLUDED_TERM:  rf.last_log_term_in_snapshot,
-		DATA:                rf.snapshot_data,
-	}
-	// TODO: not in the same place hold and release lock!
-	rf.mu.Unlock()
-	reply := RequestAppendEntryReply{}
+func (rf *Raft) sendSnapshotOnetime(server int, args *RequestInstallSnapshotArgs, reply *RequestInstallSnapshotReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestInstallSnapshot", args, reply)
 	return ok
 }
 
 func (rf *Raft) sendSnapshot(server int, this_round_term int) {
-	// FIXME:
+	// // FIXME: implement this function
+	// args := &RequestInstallSnapshotArgs{
+	// 	TERM:                rf.current_term,
+	// 	LEADER_ID:           rf.me,
+	// 	LAST_INCLUDED_INDEX: rf.last_log_index_in_snapshot,
+	// 	LAST_INCLUDED_TERM:  rf.last_log_term_in_snapshot,
+	// 	DATA:                rf.snapshot_data,
+	// }
+	// reply := &RequestInstallSnapshotReply{}
+	// rf.sendSnapshotOnetime(server, args, reply)
+	log.Println("LEADER should send snapshot to Server", server)
 }
 
 func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
@@ -1398,9 +1398,8 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		need_snapshot := rf.next_index[server] <= rf.last_log_index_in_snapshot
 
 		if need_snapshot {
-			// go send snapshot
 			rf.mu.Unlock()
-			rf.sendSnapshot(server, this_round_term)
+			go rf.sendSnapshot(server, this_round_term)
 			return
 		} else {
 			// log not match
