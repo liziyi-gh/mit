@@ -1022,7 +1022,6 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 
 	for {
 		if rf.killed() {
-			log.Printf("one gorountine DONE")
 			return
 		}
 		ok := false
@@ -1158,7 +1157,6 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 
 	for {
 		if rf.killed() {
-			log.Printf("newPreVote gorountine DONE")
 			return false
 		}
 
@@ -1430,7 +1428,6 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 
 	for {
 		if rf.killed() {
-			log.Printf("one gorountine DONE")
 			return
 		}
 
