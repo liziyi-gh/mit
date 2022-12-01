@@ -177,8 +177,6 @@ type Raft struct {
 	enable_feature_prevote bool
 }
 
-// NOTE: begin log function
-
 // use this function with lock
 func (rf *Raft) GetPositionByIndex(index int) (int, bool) {
 	for i := rf.LogLength() - 1; i >= 0; i-- {
@@ -309,8 +307,6 @@ func (rf *Raft) RemoveLogIndexLessThan(last_log_index int) bool {
 	rf.persist()
 	return true
 }
-
-// NOTE: end log function
 
 // use this function with lock
 func (rf *Raft) SetTerm(new_term int) bool {
@@ -972,9 +968,9 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 	rf.mu.Lock()
 	args.TERM = this_round_term
 	args.CANDIDATE_ID = rf.me
-	if rf.HaveAnyLog() {
-		args.PREV_LOG_INDEX = rf.GetLatestLogIndex()
-		args.PREV_LOG_TERM = rf.GetLatestLogTerm()
+	if rf.HaveAnyLog() || rf.HasSnapshot() {
+		args.PREV_LOG_INDEX = rf.GetLatestLogIndexIncludeSnapshot()
+		args.PREV_LOG_TERM = rf.GetLatestLogTermIncludeSnapshot()
 	} else {
 		args.PREV_LOG_TERM = -1
 		args.PREV_LOG_INDEX = -1
@@ -1031,9 +1027,9 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 	args.TERM = this_round_term + 1
 	args.CANDIDATE_ID = rf.me
 
-	if rf.HaveAnyLog() {
-		args.PREV_LOG_TERM = rf.GetLatestLogTerm()
-		args.PREV_LOG_INDEX = rf.GetLatestLogIndex()
+	if rf.HaveAnyLog() || rf.HasSnapshot() {
+		args.PREV_LOG_INDEX = rf.GetLatestLogIndexIncludeSnapshot()
+		args.PREV_LOG_TERM = rf.GetLatestLogTermIncludeSnapshot()
 	} else {
 		args.PREV_LOG_TERM = -1
 		args.PREV_LOG_INDEX = -1
@@ -1512,7 +1508,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	term = rf.current_term
 	isLeader = true
-	new_log_index = rf.GetLatestLogIndex() + 1
+	new_log_index = rf.GetLatestLogIndexIncludeSnapshot() + 1
 	rf.next_index[rf.me] = new_log_index + 1
 	new_log := &Log{
 		INDEX:   new_log_index,
@@ -1606,11 +1602,7 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 // use this function when hold the lock
 func (rf *Raft) becomeLeader() {
 	rf.status = LEADER
-	if rf.GetLatestLogIndex() > rf.last_log_index_in_snapshot {
-		rf.next_index[rf.me] = rf.GetLatestLogIndex() + 1
-	} else {
-		rf.next_index[rf.me] = rf.last_log_index_in_snapshot + 1
-	}
+	rf.next_index[rf.me] = rf.GetLatestLogIndexIncludeSnapshot() + 1
 
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
