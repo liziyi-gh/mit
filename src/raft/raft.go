@@ -246,14 +246,6 @@ func (rf *Raft) GetLatestLogIndexIncludeSnapshot() int {
 }
 
 // use this function with lock
-func (rf *Raft) GetLatestLogTerm() int {
-	if rf.HaveAnyLog() {
-		return rf.log[len(rf.log)-1].TERM
-	}
-	return 0
-}
-
-// use this function with lock
 func (rf *Raft) GetLatestLogTermIncludeSnapshot() int {
 	if rf.HaveAnyLog() {
 		return rf.log[len(rf.log)-1].TERM
