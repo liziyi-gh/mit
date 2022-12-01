@@ -237,9 +237,31 @@ func (rf *Raft) GetLatestLogIndex() int {
 }
 
 // use this function with lock
+func (rf *Raft) GetLatestLogIndexIncludeSnapshot() int {
+	if rf.HaveAnyLog() {
+		return rf.log[len(rf.log)-1].INDEX
+	}
+	if rf.last_log_index_in_snapshot > 0 {
+		return rf.last_log_index_in_snapshot
+	}
+	return 0
+}
+
+// use this function with lock
 func (rf *Raft) GetLatestLogTerm() int {
 	if rf.HaveAnyLog() {
 		return rf.log[len(rf.log)-1].TERM
+	}
+	return 0
+}
+
+// use this function with lock
+func (rf *Raft) GetLatestLogTermIncludeSnapshot() int {
+	if rf.HaveAnyLog() {
+		return rf.log[len(rf.log)-1].TERM
+	}
+	if rf.last_log_term_in_snapshot > 0 {
+		return rf.last_log_term_in_snapshot
 	}
 	return 0
 }
@@ -518,26 +540,27 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 	for {
 		if rf.killed() {
-			log.Printf("one gorountine DONE")
 			return
 		}
+
 		<-rf.recently_commit
+
 		rf.mu.Lock()
 		if current_term != rf.current_term {
-			log.Printf("Server[%d] quit leader update commit, term change", rf.me)
 			rf.mu.Unlock()
 			return
 		}
 
 		lowest_commit_index := findTopK(rf.next_index, rf.quorum_number) - 1
-		if lowest_commit_index <= 0 || lowest_commit_index > rf.GetLatestLogIndex() {
+		if lowest_commit_index <= 0 || lowest_commit_index > rf.GetLatestLogIndexIncludeSnapshot() {
 			rf.mu.Unlock()
 			continue
 		}
 
 		// NOTE: prevent counting number to commit previous term's log
 		// FIXME: with snapshot, this line is error
-		if rf.GetLogTermByIndex(lowest_commit_index) != current_term {
+		lowest_commit_term := rf.GetLogTermByIndex(lowest_commit_index)
+		if lowest_commit_term != current_term {
 			rf.mu.Unlock()
 			continue
 		}
@@ -597,12 +620,8 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		argi.TERM = rf.current_term
 		argi.LEADER_ID = rf.me
 		argi.LEADER_COMMIT = rf.commit_index
-		if rf.HaveAnyLog() {
-			argi.PREV_LOG_INDEX = rf.GetLatestLogIndex()
-		}
-		if 1 <= argi.PREV_LOG_INDEX && argi.PREV_LOG_INDEX <= rf.GetLatestLogIndex() {
-			argi.PREV_LOG_TERM = rf.GetLogTermByIndex(argi.PREV_LOG_INDEX)
-		}
+		argi.PREV_LOG_INDEX = rf.GetLatestLogIndexIncludeSnapshot()
+		argi.PREV_LOG_TERM = rf.GetLatestLogTermIncludeSnapshot()
 		// don't send heart beat to myself
 		if i == args[i].LEADER_ID {
 			continue
