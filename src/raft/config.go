@@ -269,7 +269,11 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 			// keep reading after error so that Raft doesn't block
 			// holding locks...
 		}
-		fmt.Printf("server %v apply %v\n", i, m.CommandIndex)
+		if m.SnapshotValid {
+			fmt.Printf("server %v apply snapshot %t \n", i, m.SnapshotValid)
+		} else {
+			fmt.Printf("server %v apply %v\n", i, m.CommandIndex)
+		}
 	}
 }
 
