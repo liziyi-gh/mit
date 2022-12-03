@@ -218,7 +218,11 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	}
 
 	for m := range applyCh {
-		fmt.Printf("server %v going to apply %v\n", i, m.CommandIndex)
+		if m.CommandIndex == 0 {
+			fmt.Printf("server %v going to apply snapshot %t \n", i, m.SnapshotValid)
+		} else {
+			fmt.Printf("server %v going to apply %v\n", i, m.CommandIndex)
+		}
 		err_msg := ""
 		if m.SnapshotValid {
 			if rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
