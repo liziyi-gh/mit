@@ -1442,8 +1442,6 @@ end:
 }
 
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
-	log.Printf("Server[%d] enter handleAppendEntryForOneServer", rf.me)
-	defer log.Print("Server[", server, "] quit handleAppendEntryForOneServer")
 	worker_number := 3
 	ch := make(chan struct{}, worker_number)
 	for i := 0; i < worker_number; i++ {
