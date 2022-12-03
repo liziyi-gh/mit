@@ -738,8 +738,8 @@ there:
 
 	// rpc call success
 	reply.SUCCESS = true
-	log.Println("Server[", rf.me, "]Success append log UUID: ", args.UUID)
 
+	// revert logs to normal order
 	for i, j := 0, len(append_logs)-1; i < j; i, j = i+1, j-1 {
 		append_logs[i], append_logs[j] = append_logs[j], append_logs[i]
 	}
