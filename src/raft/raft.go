@@ -689,69 +689,83 @@ func (rf *Raft) hasSnapshotLog(logs []Log) (bool, int) {
 	return false, -1
 }
 
+func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
+	append_logs := args.ENTRIES
+	matched, matched_log_index := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
+	matched_log_position, _ := rf.GetPositionByIndex(matched_log_index)
+	iter_self_log_position := matched_log_position + 1
+
+	// prev log match
+	if matched {
+		for j := len(args.ENTRIES) - 1; j >= 0; j-- {
+			if iter_self_log_position >= rf.LogLength() {
+				return append_logs, true
+			}
+			iter_args_log := &args.ENTRIES[j]
+			iter_self_log_idx := rf.GetIndexByPosition(iter_self_log_position)
+			not_same_term := iter_args_log.TERM != rf.GetLogTermByIndex(iter_self_log_idx)
+			not_same_index := iter_args_log.INDEX != iter_self_log_idx
+			dismatch := not_same_term || not_same_index
+			if dismatch {
+				rf.RemoveLogIndexGreaterThan(iter_self_log_idx - 1)
+				return append_logs, true
+			}
+			iter_self_log_position++
+			append_logs = append_logs[:len(append_logs)-1]
+		}
+	}
+
+	// prev log dismatched
+	if !matched {
+		if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
+			rf.RemoveLogIndexGreaterThan(0)
+			return append_logs, true
+		}
+		has_snapshot_log, snapshot_position := rf.hasSnapshotLog(append_logs)
+		if has_snapshot_log {
+			rf.RemoveLogIndexGreaterThan(rf.last_log_index_in_snapshot)
+			append_logs = append_logs[:snapshot_position]
+			return append_logs, true
+		} else {
+			log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
+			return []Log{}, false
+		}
+	}
+	return []Log{}, false
+}
+
 func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	log.Print("Server[", rf.me, "] have log", rf.log)
 	log.Print("Server[", rf.me, "] got append log args:", args)
 
 	append_logs := args.ENTRIES
+	ok := false
 
 	if rf.HaveAnyLog() {
-		matched, matched_log_index := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
-		matched_log_position, _ := rf.GetPositionByIndex(matched_log_index)
-		iter_self_log_position := matched_log_position + 1
-
-		// prev log match
-		if matched {
-			for j := len(args.ENTRIES) - 1; j >= 0; j-- {
-				if iter_self_log_position >= rf.LogLength() {
-					goto start_append_log
-				}
-				iter_args_log := &args.ENTRIES[j]
-				iter_self_log_idx := rf.GetIndexByPosition(iter_self_log_position)
-				not_same_term := iter_args_log.TERM != rf.GetLogTermByIndex(iter_self_log_idx)
-				not_same_index := iter_args_log.INDEX != iter_self_log_idx
-				dismatch := not_same_term || not_same_index
-				if dismatch {
-					rf.RemoveLogIndexGreaterThan(iter_self_log_idx - 1)
-					goto start_append_log
-				}
-				iter_self_log_position++
-				append_logs = append_logs[:len(append_logs)-1]
-			}
-		}
-
-		// prev log dismatched
-		if !matched {
-			if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
-				rf.RemoveLogIndexGreaterThan(0)
-				goto start_append_log
-			}
-			has_snapshot_log, snapshot_position := rf.hasSnapshotLog(append_logs)
-			if has_snapshot_log {
-				rf.RemoveLogIndexGreaterThan(rf.last_log_index_in_snapshot)
-				append_logs = append_logs[:snapshot_position]
-				goto start_append_log
-			} else {
-				log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
-				rf.buildReplyForAppendEntryFailed(args, reply)
-				return
-			}
-		}
-	}
-start_append_log:
-
-	// if have no log
-	if len(append_logs) > 0 && !rf.HaveAnyLog() {
-		is_last_log_in_snapshot := args.ENTRIES[len(args.ENTRIES)-1].INDEX == rf.last_log_index_in_snapshot &&
-			args.ENTRIES[len(args.ENTRIES)-1].TERM == rf.last_log_term_in_snapshot
-		is_first_log := args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0
-		if (!is_last_log_in_snapshot) && (!is_first_log) {
-			log.Print("Server[", rf.me, "] append log to empty failed")
+		append_logs, ok = rf.sliceLogToAlign(args)
+		if !ok {
 			rf.buildReplyForAppendEntryFailed(args, reply)
 			return
 		}
 	}
 
+	// if have no log
+	if len(append_logs) > 0 && !rf.HaveAnyLog() {
+		has_snapshot_log, snapshot_position := rf.hasSnapshotLog(append_logs)
+		if has_snapshot_log {
+			rf.RemoveLogIndexGreaterThan(rf.last_log_index_in_snapshot)
+			append_logs = append_logs[:snapshot_position]
+			goto start_append_logs
+		}
+		is_first_log := args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0
+		if !is_first_log {
+			// panic("append log empty failed")
+			rf.buildReplyForAppendEntryFailed(args, reply)
+			return
+		}
+	}
+
+start_append_logs:
 	// rpc call success
 	reply.SUCCESS = true
 
