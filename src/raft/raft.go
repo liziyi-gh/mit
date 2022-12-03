@@ -1244,9 +1244,14 @@ func (rf *Raft) successAppend(server int, this_round_term int,
 }
 
 // use this function when hold lock
+// FIXME: fix position of log
 func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	initil_log_position := rf.LogLength() - 1
-	new_prev_log_position := args.PREV_LOG_INDEX - 2
+	new_prev_log_position, ok := rf.GetPositionByIndex(args.PREV_LOG_INDEX - 1)
+	if !ok {
+		log.Println("backward args find position failed, should not happen.")
+		panic("backward args find position failed, should not happen.")
+	}
 	new_entries := make([]Log, 0)
 
 	// peer have at leaest 1 log in args.PREV_LOG_TERM
@@ -1254,7 +1259,10 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		// move prev log to previous term's last log
 		ok, last_index_of_prev_term := findLastIndexOfTerm(rf.log, args.PREV_LOG_TERM)
 		if ok {
-			new_prev_log_position = last_index_of_prev_term - 1
+			tmp, ok2 := rf.GetPositionByIndex(last_index_of_prev_term)
+			if ok2 {
+				new_prev_log_position = tmp
+			}
 		}
 	}
 
@@ -1262,7 +1270,10 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 	if reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM == None {
 		ok, last_index_before_term := findLastIndexbeforeTerm(rf.log, args.PREV_LOG_TERM)
 		if ok {
-			new_prev_log_position = last_index_before_term - 1
+			tmp, ok3 := rf.GetPositionByIndex(last_index_before_term)
+			if ok3 {
+				new_prev_log_position = tmp
+			}
 		} else {
 			if new_prev_log_position >= 0 {
 				new_prev_log_position = 0
@@ -1277,7 +1288,7 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 	args.ENTRIES = new_entries
 
 	if new_prev_log_position >= 0 {
-		new_prev_log_idx := new_prev_log_position + 1
+		new_prev_log_idx := rf.log[new_prev_log_position].INDEX
 		args.PREV_LOG_TERM = rf.GetLogTermByIndex(new_prev_log_idx)
 		args.PREV_LOG_INDEX = new_prev_log_idx
 	} else {
@@ -1372,7 +1383,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 	failed_times := 0
 
 	// reduce rpc number
-	if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] && rf.me != server {
+	if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] {
 		// NOTE: why here cause problem? should promise next_index would not update by mistake,
 		// so should promise update next_index in right term
 		log.Print("Server[", rf.me, "] skip args ", args, "because peer ", server, " already have")
@@ -1615,6 +1626,9 @@ func (rf *Raft) becomeLeader() {
 	}
 
 	for i := 0; i < rf.all_server_number; i++ {
+		if i == rf.me {
+			continue
+		}
 		go rf.handleAppendEntryForOneServer(i, rf.current_term)
 	}
 	log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
