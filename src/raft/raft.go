@@ -1244,7 +1244,6 @@ func (rf *Raft) successAppend(server int, this_round_term int,
 }
 
 // use this function when hold lock
-// FIXME: fix position of log
 func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	initil_log_position := rf.LogLength() - 1
 	new_prev_log_position, ok := rf.GetPositionByIndex(args.PREV_LOG_INDEX - 1)
