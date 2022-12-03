@@ -642,20 +642,15 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	log.Printf("Server[%d] install snapshot from [%d]", rf.me, args.LEADER_ID)
+	log.Printf("Server[%d] got install snapshot request from [%d], last log index is %d", rf.me, args.LEADER_ID, args.LAST_INCLUDED_INDEX)
 
 	reply.TERM = rf.current_term
-	if rf.current_term > args.TERM {
+	if rf.current_term != args.TERM {
+		log.Println("Reject install snapshot")
 		return
 	}
 
-	position, found_log_index := rf.GetPositionByIndex(args.LAST_INCLUDED_INDEX)
-	if found_log_index {
-		has_same_term := rf.log[position].TERM == args.LAST_INCLUDED_TERM
-		if has_same_term {
-			return
-		}
-	}
+	log.Printf("Server[%d] install snapshot from [%d]", rf.me, args.LEADER_ID)
 
 	// discard the entire log
 	rf.RemoveLogIndexGreaterThan(0)
@@ -804,7 +799,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		// prevent heartbeat commit some logs that should not commit
 		if rf.HaveAnyLog() {
 			if matched && args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
-				log.Print("Server[", rf.me, "] going to commit args:", args)
+				log.Print("Server[", rf.me, "] going to commit heartbeat args:", args)
 				log.Print("Server[", rf.me, "] have log", rf.log)
 				rf.updateCommitIndex(args.PREV_LOG_INDEX)
 			}
