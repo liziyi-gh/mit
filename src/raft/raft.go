@@ -1264,8 +1264,16 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 	initil_log_position := rf.LogLength() - 1
 	new_prev_log_position, ok := rf.GetPositionByIndex(args.PREV_LOG_INDEX - 1)
 	if !ok {
-		log.Println("backward args find position failed, should not happen.")
-		panic("backward args find position failed, should not happen.")
+		if rf.HaveAnyLog() {
+			if args.PREV_LOG_INDEX == rf.log[0].INDEX {
+				new_prev_log_position = 0
+			}
+		} else {
+			log.Println("leader log is", rf.log)
+			log.Println("args.PREV_LOG_INDEX is", args.PREV_LOG_INDEX)
+			panic("backward args find position failed, should not happen.")
+		}
+
 	}
 	new_entries := make([]Log, 0)
 
@@ -1442,8 +1450,10 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		failed_times++
 		log.Print("Server[", server, "] failed time: ", failed_times, ", args is ", args)
 
-		need_snapshot := (rf.next_index[server] <= rf.last_log_index_in_snapshot) ||
-			(reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM < rf.last_log_index_in_snapshot)
+		need_snapshot := ((rf.next_index[server] <= rf.last_log_index_in_snapshot) ||
+			(reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM < rf.last_log_index_in_snapshot)) &&
+			(reply.LAST_LOG_INDEX_IN_SNAPSHOT != rf.last_log_index_in_snapshot &&
+				reply.LAST_LOG_TERM_IN_SNAPSHOT != rf.last_log_term_in_snapshot)
 
 		if need_snapshot {
 			rf.mu.Unlock()
@@ -1452,7 +1462,9 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 			return
 		} else {
 			// log not match
-			if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
+			is_first_log := args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0
+			prev_log_is_snapshot_log := args.PREV_LOG_TERM == rf.last_log_term_in_snapshot && args.PREV_LOG_INDEX == rf.last_log_index_in_snapshot
+			if is_first_log || prev_log_is_snapshot_log {
 				goto end
 			}
 			rf.backwardArgsWhenAppendEntryFailed(args, reply)
