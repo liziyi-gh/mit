@@ -683,6 +683,17 @@ func (rf *Raft) buildReplyForAppendEntryFailed(args *RequestAppendEntryArgs, rep
 	reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM = index
 }
 
+func (rf *Raft) hasSnapshotLog(logs []Log) bool {
+	for i := len(logs) - 1; i >= 0; i-- {
+		if logs[i].INDEX == rf.last_log_index_in_snapshot &&
+			logs[i].TERM == rf.last_log_term_in_snapshot {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	log.Print("Server[", rf.me, "] have log", rf.log)
 	log.Print("Server[", rf.me, "] got append log args:", args)
@@ -690,15 +701,25 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 	append_logs := args.ENTRIES
 
 	if rf.HaveAnyLog() {
-		matched, matched_log_index := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
-		matched_log_position, _ := rf.GetPositionByIndex(matched_log_index)
-		iter_self_log_position := matched_log_position + 1
+		matched := false
+		iter_self_log_position := 0
+		snapshot_log_in_args := rf.hasSnapshotLog(append_logs)
+
+		if snapshot_log_in_args {
+			matched = true
+			iter_self_log_position = 0
+		} else {
+			matched_log_index := 0
+			matched, matched_log_index = findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
+			matched_log_position, _ := rf.GetPositionByIndex(matched_log_index)
+			iter_self_log_position = matched_log_position + 1
+		}
 
 		// prev log match
 		if matched {
 			for j := len(args.ENTRIES) - 1; j >= 0; j-- {
 				if iter_self_log_position >= rf.LogLength() {
-					goto there
+					goto start_append_log
 				}
 				iter_args_log := &args.ENTRIES[j]
 				iter_self_log_idx := rf.GetIndexByPosition(iter_self_log_position)
@@ -707,7 +728,7 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 				dismatch := not_same_term || not_same_index
 				if dismatch {
 					rf.RemoveLogIndexGreaterThan(rf.GetIndexByPosition(iter_self_log_position - 1))
-					goto there
+					goto start_append_log
 				}
 				iter_self_log_position++
 				append_logs = append_logs[:len(append_logs)-1]
@@ -725,11 +746,14 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 			}
 		}
 	}
-there:
+start_append_log:
 
 	// if have no log
 	if len(append_logs) > 0 && !rf.HaveAnyLog() {
-		if args.PREV_LOG_INDEX != 0 || args.PREV_LOG_TERM != 0 {
+		is_last_log_in_snapshot := args.ENTRIES[len(args.ENTRIES)-1].INDEX == rf.last_log_index_in_snapshot &&
+			args.ENTRIES[len(args.ENTRIES)-1].TERM == rf.last_log_term_in_snapshot
+		is_first_log := args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0
+		if (!is_last_log_in_snapshot) && (!is_first_log) {
 			log.Print("Server[", rf.me, "] append log to empty failed")
 			rf.buildReplyForAppendEntryFailed(args, reply)
 			return
@@ -1426,7 +1450,8 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		failed_times++
 		log.Print("Server[", server, "] failed time: ", failed_times, ", args is ", args)
 
-		need_snapshot := rf.next_index[server] <= rf.last_log_index_in_snapshot
+		need_snapshot := (rf.next_index[server] <= rf.last_log_index_in_snapshot) ||
+			(reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM <= rf.last_log_index_in_snapshot)
 
 		if need_snapshot {
 			rf.mu.Unlock()
