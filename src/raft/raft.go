@@ -1443,7 +1443,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		log.Print("Server[", server, "] failed time: ", failed_times, ", args is ", args)
 
 		need_snapshot := (rf.next_index[server] <= rf.last_log_index_in_snapshot) ||
-			(reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM <= rf.last_log_index_in_snapshot)
+			(reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM < rf.last_log_index_in_snapshot)
 
 		if need_snapshot {
 			rf.mu.Unlock()
