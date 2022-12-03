@@ -1424,12 +1424,12 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		// NOTE: why here cause problem? should promise next_index would not update by mistake,
 		// so should promise update next_index in right term
 		log.Print("Server[", rf.me, "] skip args ", args, "because peer ", server, " already have")
-		goto end
+		goto release_lock_and_return
 	}
 
 	if server == rf.me {
 		rf.successAppend(server, this_round_term, args)
-		goto end
+		goto release_lock_and_return
 	}
 	rf.mu.Unlock()
 
@@ -1439,25 +1439,25 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		ok := rf.sendOneAppendEntry(server, args, reply)
 		rf.mu.Lock()
 		if !ok {
-			goto end
+			goto release_lock_and_return
 		}
 
 		// new term case 1, update term by other way
 		if this_round_term != rf.current_term {
-			goto end
+			goto release_lock_and_return
 		}
 
 		if reply.SUCCESS {
 			// TODO: why can not delete this success append?
 			// something about the lock? it's not happen every time.
 			rf.successAppend(server, this_round_term, args)
-			goto end
+			goto release_lock_and_return
 		}
 
 		// new term case 2, know from peer
 		if reply.TERM > rf.current_term {
 			rf.becomeFollower(reply.TERM, -1)
-			goto end
+			goto release_lock_and_return
 		}
 
 		// reply is false
@@ -1479,7 +1479,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 			is_first_log := args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0
 			prev_log_is_snapshot_log := args.PREV_LOG_TERM == rf.last_log_term_in_snapshot && args.PREV_LOG_INDEX == rf.last_log_index_in_snapshot
 			if is_first_log || prev_log_is_snapshot_log {
-				goto end
+				goto release_lock_and_return
 			}
 			rf.backwardArgsWhenAppendEntryFailed(args, reply)
 			log.Print("Server[", server, "] log dismatch, new args is ", args)
@@ -1489,7 +1489,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		// lock has been release here, no code below
 	} // end reply false for
 
-end:
+release_lock_and_return:
 	rf.mu.Unlock()
 	return
 }
