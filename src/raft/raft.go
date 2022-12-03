@@ -412,6 +412,7 @@ func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 	log.Println("Server[", rf.me, "] Snapshot index is ", index)
 	log.Println("Server[", rf.me, "] have log before Snapshot", rf.log)
 	rf.RemoveLogIndexLessThan(index + 1)
+	rf.persist()
 	log.Println("Server[", rf.me, "] have log after Snapshot", rf.log)
 }
 
