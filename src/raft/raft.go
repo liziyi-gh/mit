@@ -402,7 +402,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.commit_index_in_quorom <= index {
+	if index >= rf.commit_index_in_quorom || index >= rf.commit_index {
 		log.Println("Server[", rf.me, "] give up Snapshot, some log not commit")
 		return
 	}
