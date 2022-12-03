@@ -602,16 +602,16 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 	reply := make([]RequestAppendEntryReply, rf.all_server_number)
 
 	for i = 0; i < rf.all_server_number; i++ {
+		// don't send heart beat to myself
+		if i == args[i].LEADER_ID {
+			continue
+		}
 		argi := &args[i]
 		argi.TERM = rf.current_term
 		argi.LEADER_ID = rf.me
 		argi.LEADER_COMMIT = rf.commit_index
 		argi.PREV_LOG_INDEX = rf.GetLatestLogIndexIncludeSnapshot()
 		argi.PREV_LOG_TERM = rf.GetLatestLogTermIncludeSnapshot()
-		// don't send heart beat to myself
-		if i == args[i].LEADER_ID {
-			continue
-		}
 		go rf.sendOneAppendEntry(i, argi, &reply[i])
 	}
 }
