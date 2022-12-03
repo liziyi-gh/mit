@@ -1419,7 +1419,6 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for server", server, "args is ", args)
 	failed_times := 0
 
-	// reduce rpc number
 	if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] {
 		// NOTE: why here cause problem? should promise next_index would not update by mistake,
 		// so should promise update next_index in right term
