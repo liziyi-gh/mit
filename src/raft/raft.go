@@ -1281,7 +1281,6 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		if rf.HaveAnyLog() {
 			if args.PREV_LOG_INDEX == rf.log[0].INDEX {
 				new_prev_log_position = -1
-				log.Println("liziyi")
 			}
 		} else {
 			log.Println("leader log is", rf.log)
