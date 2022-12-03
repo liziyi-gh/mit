@@ -678,15 +678,15 @@ func (rf *Raft) buildReplyForAppendEntryFailed(args *RequestAppendEntryArgs, rep
 	reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM = index
 }
 
-func (rf *Raft) hasSnapshotLog(logs []Log) bool {
+func (rf *Raft) hasSnapshotLog(logs []Log) (bool, int) {
 	for i := len(logs) - 1; i >= 0; i-- {
 		if logs[i].INDEX == rf.last_log_index_in_snapshot &&
 			logs[i].TERM == rf.last_log_term_in_snapshot {
-			return true
+			return true, i
 		}
 	}
 
-	return false
+	return false, -1
 }
 
 func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
@@ -696,19 +696,9 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 	append_logs := args.ENTRIES
 
 	if rf.HaveAnyLog() {
-		matched := false
-		iter_self_log_position := 0
-		snapshot_log_in_args := rf.hasSnapshotLog(append_logs)
-
-		if snapshot_log_in_args {
-			matched = true
-			iter_self_log_position = 0
-		} else {
-			matched_log_index := 0
-			matched, matched_log_index = findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
-			matched_log_position, _ := rf.GetPositionByIndex(matched_log_index)
-			iter_self_log_position = matched_log_position + 1
-		}
+		matched, matched_log_index := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
+		matched_log_position, _ := rf.GetPositionByIndex(matched_log_index)
+		iter_self_log_position := matched_log_position + 1
 
 		// prev log match
 		if matched {
@@ -722,7 +712,7 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 				not_same_index := iter_args_log.INDEX != iter_self_log_idx
 				dismatch := not_same_term || not_same_index
 				if dismatch {
-					rf.RemoveLogIndexGreaterThan(rf.GetIndexByPosition(iter_self_log_position - 1))
+					rf.RemoveLogIndexGreaterThan(iter_self_log_idx - 1)
 					goto start_append_log
 				}
 				iter_self_log_position++
@@ -734,6 +724,13 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 		if !matched {
 			if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
 				rf.RemoveLogIndexGreaterThan(0)
+				goto start_append_log
+			}
+			has_snapshot_log, snapshot_position := rf.hasSnapshotLog(append_logs)
+			if has_snapshot_log {
+				rf.RemoveLogIndexGreaterThan(rf.last_log_index_in_snapshot)
+				append_logs = append_logs[:snapshot_position]
+				goto start_append_log
 			} else {
 				log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
 				rf.buildReplyForAppendEntryFailed(args, reply)
