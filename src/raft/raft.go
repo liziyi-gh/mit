@@ -1347,13 +1347,13 @@ func (rf *Raft) sendSnapshot(server int, this_round_term int) {
 		}
 		if ok {
 			rf.next_index[server] = args.LAST_INCLUDED_INDEX + 1
-			log.Println("LEADER", rf.me, "send snapshot to Server", server)
+			log.Println("leader", rf.me, "send snapshot to Server", server)
 			goto release_lock_and_return
 		}
 		rf.mu.Unlock()
 	}
 
-	log.Println("LEADER", rf.me, "failed send snapshot to Server", server)
+	log.Println("leader", rf.me, "failed send snapshot to Server", server)
 	return
 
 release_lock_and_return:
