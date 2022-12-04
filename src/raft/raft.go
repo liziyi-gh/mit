@@ -402,8 +402,19 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	if !rf.HaveAnyLog() {
+		return
+	}
+	if index < rf.log[0].INDEX {
+		return
+	}
 	if index >= rf.commit_index_in_quorom || index >= rf.commit_index {
 		log.Println("Server[", rf.me, "] give up Snapshot, some log not commit")
+		go func() {
+			duration := 100
+			time.Sleep(time.Duration(duration) * time.Millisecond)
+			rf.doSnapshot(index, snapshot)
+		}()
 		return
 	}
 	rf.snapshot_data = snapshot
@@ -560,6 +571,9 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 	if new_commit_index <= rf.commit_index {
 		return
 	}
+	if new_commit_index <= rf.last_log_index_in_snapshot {
+		return
+	}
 
 	for idx := rf.commit_index + 1; idx <= new_commit_index && idx <= rf.GetLatestLogIndex(); idx++ {
 		command, ok := rf.GetLogCommandByIndex(idx)
@@ -668,6 +682,7 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 	rf.last_log_term_in_snapshot = args.LAST_INCLUDED_TERM
 	rf.last_log_index_in_snapshot = args.LAST_INCLUDED_INDEX
 	rf.last_applied = args.LAST_INCLUDED_INDEX
+	rf.commit_index = args.LAST_INCLUDED_INDEX
 }
 
 func (rf *Raft) buildReplyForAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
@@ -758,9 +773,10 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 			append_logs = append_logs[:snapshot_position]
 			goto start_append_logs
 		}
+		prev_log_is_snapshot_log := args.PREV_LOG_INDEX == rf.last_log_index_in_snapshot && args.PREV_LOG_TERM == rf.last_log_term_in_snapshot
 		is_first_log := args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0
-		if !is_first_log {
-			// panic("append log empty failed")
+		if !is_first_log && !prev_log_is_snapshot_log {
+			log.Println("server", rf.me, "append empty failed")
 			rf.buildReplyForAppendEntryFailed(args, reply)
 			return
 		}
@@ -1278,10 +1294,15 @@ func (rf *Raft) successAppend(server int, this_round_term int,
 func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	initil_log_position := rf.LogLength() - 1
 	new_prev_log_position, ok := rf.GetPositionByIndex(args.PREV_LOG_INDEX - 1)
+	new_entries := make([]Log, 0)
 	if !ok {
 		if rf.HaveAnyLog() {
-			if args.PREV_LOG_INDEX == rf.log[0].INDEX {
+			if args.PREV_LOG_INDEX <= rf.log[0].INDEX {
 				new_prev_log_position = -1
+				log.Println("leader log is", rf.log)
+				log.Println("args.PREV_LOG_INDEX is", args.PREV_LOG_INDEX)
+				log.Println("liziyi")
+				goto start_append_logs
 			}
 		} else {
 			log.Println("leader log is", rf.log)
@@ -1290,7 +1311,6 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		}
 
 	}
-	new_entries := make([]Log, 0)
 
 	// peer have at leaest 1 log in args.PREV_LOG_TERM
 	if reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM != None {
@@ -1299,7 +1319,9 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		if ok {
 			tmp, ok2 := rf.GetPositionByIndex(last_index_of_prev_term)
 			if ok2 {
+				log.Println("liziyi ok2")
 				new_prev_log_position = tmp
+				goto start_append_logs
 			}
 		}
 	}
@@ -1310,15 +1332,20 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		if ok {
 			tmp, ok3 := rf.GetPositionByIndex(last_index_before_term)
 			if ok3 {
+				log.Println("liziyi ok3")
 				new_prev_log_position = tmp
+				goto start_append_logs
 			}
 		} else {
 			if new_prev_log_position >= 0 {
+				log.Println("liziyi ok4")
 				new_prev_log_position = 0
+				goto start_append_logs
 			}
 		}
 	}
 
+start_append_logs:
 	// add logs from latest to prev_log_position to args
 	for i := initil_log_position; i > new_prev_log_position; i-- {
 		new_entries = append(new_entries, rf.log[i])
@@ -1330,8 +1357,14 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		args.PREV_LOG_TERM = rf.GetLogTermByIndex(new_prev_log_idx)
 		args.PREV_LOG_INDEX = new_prev_log_idx
 	} else {
-		args.PREV_LOG_TERM = 0
-		args.PREV_LOG_INDEX = 0
+		if rf.HasSnapshot() {
+			args.PREV_LOG_INDEX = rf.last_log_index_in_snapshot
+			args.PREV_LOG_TERM = rf.last_log_term_in_snapshot
+		} else {
+			args.PREV_LOG_TERM = 0
+			args.PREV_LOG_INDEX = 0
+		}
+
 	}
 }
 
