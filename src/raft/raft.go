@@ -1500,7 +1500,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		need_snapshot := rf.HasSnapshot() &&
 			((rf.next_index[server] <= rf.last_log_index_in_snapshot) ||
 				(reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM < rf.last_log_index_in_snapshot)) &&
-			(reply.LAST_LOG_INDEX_IN_SNAPSHOT != rf.last_log_index_in_snapshot &&
+			(reply.LAST_LOG_INDEX_IN_SNAPSHOT != rf.last_log_index_in_snapshot ||
 				reply.LAST_LOG_TERM_IN_SNAPSHOT != rf.last_log_term_in_snapshot)
 
 		if need_snapshot {
