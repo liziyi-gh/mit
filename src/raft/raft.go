@@ -1474,6 +1474,9 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		reply := &RequestAppendEntryReply{}
 		ok := rf.sendOneAppendEntry(server, args, reply)
 		rf.mu.Lock()
+		if rf.killed() {
+			goto release_lock_and_return
+		}
 		if !ok {
 			goto release_lock_and_return
 		}
