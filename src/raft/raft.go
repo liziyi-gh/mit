@@ -408,6 +408,9 @@ func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 	if index < rf.log[0].INDEX {
 		return
 	}
+	if index <= rf.last_log_index_in_snapshot {
+		return
+	}
 	if index >= rf.commit_index_in_quorom || index >= rf.commit_index {
 		log.Println("Server[", rf.me, "] give up Snapshot, some log not commit")
 		go func() {
@@ -1529,7 +1532,7 @@ release_lock_and_return:
 }
 
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
-	worker_number := 3
+	worker_number := 100
 	ch := make(chan struct{}, worker_number)
 	for i := 0; i < worker_number; i++ {
 		ch <- struct{}{}
@@ -1552,9 +1555,9 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		// the append_entry_chan is just one time invoke, so need timer to
 		// append log continuously, otherwise it's too slow
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
-			rf.sendNewestLog(server, this_round_term, ch)
+			go rf.sendNewestLog(server, this_round_term, ch)
 		case <-rf.append_entry_chan[server]:
-			rf.sendNewestLog(server, this_round_term, ch)
+			go rf.sendNewestLog(server, this_round_term, ch)
 		}
 	}
 
