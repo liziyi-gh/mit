@@ -1535,7 +1535,8 @@ release_lock_and_return:
 }
 
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
-	worker_number := 100
+	// NOTE: if there is too much worker, can not pass cocurrent test.
+	worker_number := 3
 	ch := make(chan struct{}, worker_number)
 	for i := 0; i < worker_number; i++ {
 		ch <- struct{}{}
@@ -1554,9 +1555,6 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		rf.mu.Unlock()
 
 		select {
-		// TODO: here block, so should use go if want multipy worker, but prevent too much RPC.
-		// the append_entry_chan is just one time invoke, so need timer to
-		// append log continuously, otherwise it's too slow
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
 			go rf.sendNewestLog(server, this_round_term, ch)
 		case <-rf.append_entry_chan[server]:
