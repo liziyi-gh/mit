@@ -621,7 +621,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 
 	for i = 0; i < rf.all_server_number; i++ {
 		// don't send heart beat to myself
-		if i == args[i].LEADER_ID {
+		if i == rf.me {
 			continue
 		}
 		argi := &args[i]
