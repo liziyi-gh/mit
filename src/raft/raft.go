@@ -349,10 +349,9 @@ func (rf *Raft) persist() {
 	e.Encode(rf.last_log_term_in_snapshot)
 	e.Encode(rf.last_log_index_in_snapshot)
 	e.Encode(rf.log)
-	// FIXME: snapshot_data too large?
-	// e.Encode(rf.snapshot_data)
 	data := w.Bytes()
-	rf.persister.SaveRaftState(data)
+	rf.persister.SaveStateAndSnapshot(data, rf.snapshot_data)
+	log.Println("server", rf.me, "write", data)
 }
 
 // restore previously persisted state.
@@ -368,44 +367,47 @@ func (rf *Raft) readPersist(data []byte) {
 	logs := make([]Log, 0)
 	var last_log_term_in_snapshot int
 	var last_log_index_in_snapshot int
-	// FIXME: snapshot_data too large?
-	// var snapshot_data []byte
 	// FIXME: why decode failed?
 	// TODO: should add check code for production enviroment
 
 	ok := d.Decode(&current_term) != nil
 	if !ok {
 		log.Println("decode current_term failed")
+		goto here
 	}
 
 	ok = d.Decode(&vote_for) != nil
 	if !ok {
 		log.Println("decode vote_for failed")
+		goto here
 	}
 
 	ok = d.Decode(&last_log_term_in_snapshot) != nil
 	if !ok {
 		log.Println("decode last_log_term_in_snapshot failed")
+		goto here
 	}
 
 	ok = d.Decode(&last_log_index_in_snapshot) != nil
 	if !ok {
 		log.Println("decode last_log_index_in_snapshot failed")
+		goto here
 	}
 
 	ok = d.Decode(&logs) != nil
 	if !ok {
 		log.Println("decode logs failed")
+		goto here
 	}
-
-	//d.Decode(&snapshot_data) != nil
 
 	rf.current_term = current_term
 	rf.voted_for = vote_for
-	rf.log = logs
 	rf.last_log_term_in_snapshot = last_log_term_in_snapshot
 	rf.last_log_index_in_snapshot = last_log_index_in_snapshot
-	//rf.snapshot_data = snapshot_data
+	rf.log = logs
+
+	// snapshot_data := rf.persister.ReadSnapshot()
+	// rf.snapshot_data = snapshot_data
 	// command := ApplyMsg{
 	// 	SnapshotValid: true,
 	// 	Snapshot:      snapshot_data,
@@ -413,6 +415,9 @@ func (rf *Raft) readPersist(data []byte) {
 	// 	SnapshotIndex: last_log_index_in_snapshot,
 	// }
 	// rf.internal_apply_chan <- command
+	return
+here:
+	panic("failed")
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
