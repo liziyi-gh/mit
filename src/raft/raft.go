@@ -1339,9 +1339,8 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 				goto start_append_logs
 			}
 		} else {
-			log.Println("leader log is", rf.log)
-			log.Println("args.PREV_LOG_INDEX is", args.PREV_LOG_INDEX)
-			panic("backward args find position failed, should not happen.")
+			log.Println("backward args find position failed, a error or just cocurrent rpc.")
+			return
 		}
 
 	}
@@ -1528,16 +1527,6 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		if reply.TERM > rf.current_term {
 			rf.becomeFollower(reply.TERM, -1)
 			goto release_lock_and_return
-		}
-
-		// if already append by other goroutine
-		if len(args.ENTRIES) == 0 {
-			goto release_lock_and_return
-		}
-		if len(args.ENTRIES) > 0 {
-			if args.ENTRIES[0].INDEX < rf.next_index[server] {
-				goto release_lock_and_return
-			}
 		}
 
 		// reply is false
