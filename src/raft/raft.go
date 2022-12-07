@@ -343,19 +343,13 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.current_term)
 	e.Encode(rf.voted_for)
 	e.Encode(rf.log)
 	data := w.Bytes()
+	// FIXME: add snapshot
 	rf.persister.SaveRaftState(data)
 }
 
@@ -365,23 +359,12 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	}
 	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var current_term int
 	var vote_for int
 	logs := make([]Log, 0)
+	// FIXME: add snapshot
 	if d.Decode(&current_term) != nil ||
 		d.Decode(&vote_for) != nil ||
 		d.Decode(&logs) != nil {
