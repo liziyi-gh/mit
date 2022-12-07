@@ -15,13 +15,19 @@ do
     # go test -run TestOnlyOneElectionLZY -race > ${TESTER_LOG_FILE}
     # go test -run TestBasicAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestFailAgree2B -race > ${TESTER_LOG_FILE}
+    # go test -run TestRPCBytes2B -race > ${TESTER_LOG_FILE}
+    # go test -run TestFailNoAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestRejoin2B -race > ${TESTER_LOG_FILE}
     # go test -run TestConcurrentStarts2B -race > ${TESTER_LOG_FILE}
     # go test -run TestCount2B -race > ${TESTER_LOG_FILE}
     # go test -run TestBackup2B -race > ${TESTER_LOG_FILE}
     # go test -run TestFigure82C -race > ${TESTER_LOG_FILE}
     # go test -run TestFigure8Unreliable2C -race > ${TESTER_LOG_FILE}
-    go test -run TestSnapshotBasic2D -race > ${TESTER_LOG_FILE}
+    # go test -run TestReliableChurn2C -race > ${TESTER_LOG_FILE}
+    # go test -run TestSnapshotBasic2D -race > ${TESTER_LOG_FILE}
+    # go test -run TestSnapshotInstall2D -race > ${TESTER_LOG_FILE}
+    # go test -run TestSnapshotInstallUnreliable2D -race > ${TESTER_LOG_FILE}
+    go test -run TestSnapshotInstallCrash2D -race > ${TESTER_LOG_FILE}
 
     tmp=$(rg FAIL ${TESTER_LOG_FILE})
     tmp2=$(rg "DATA RACE" ${TESTER_LOG_FILE})
