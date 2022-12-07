@@ -346,9 +346,9 @@ func (rf *Raft) persist() {
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.current_term)
 	e.Encode(rf.voted_for)
-	e.Encode(rf.log)
 	e.Encode(rf.last_log_term_in_snapshot)
 	e.Encode(rf.last_log_index_in_snapshot)
+	e.Encode(rf.log)
 	// FIXME: snapshot_data too large?
 	// e.Encode(rf.snapshot_data)
 	data := w.Bytes()
@@ -370,19 +370,34 @@ func (rf *Raft) readPersist(data []byte) {
 	var last_log_index_in_snapshot int
 	// FIXME: snapshot_data too large?
 	// var snapshot_data []byte
+	// FIXME: why decode failed?
 
-	decode_ok1 := d.Decode(&current_term) != nil &&
-		d.Decode(&vote_for) != nil &&
-		d.Decode(&logs) != nil
-	decode_ok2 := d.Decode(&last_log_term_in_snapshot) != nil &&
-		d.Decode(&last_log_index_in_snapshot) != nil //&&
-		//d.Decode(&snapshot_data) != nil
-	decode_ok := decode_ok1 && decode_ok2
-
-	if !decode_ok {
-		log.Println("read persistent error")
-		return
+	ok := d.Decode(&current_term) != nil
+	if !ok {
+		log.Println("decode current_term failed")
 	}
+
+	ok = d.Decode(&vote_for) != nil
+	if !ok {
+		log.Println("decode vote_for failed")
+	}
+
+	ok = d.Decode(&last_log_term_in_snapshot) != nil
+	if !ok {
+		log.Println("decode last_log_term_in_snapshot failed")
+	}
+
+	ok = d.Decode(&last_log_index_in_snapshot) != nil
+	if !ok {
+		log.Println("decode last_log_index_in_snapshot failed")
+	}
+
+	ok = d.Decode(&logs) != nil
+	if !ok {
+		log.Println("decode logs failed")
+	}
+
+	//d.Decode(&snapshot_data) != nil
 
 	rf.current_term = current_term
 	rf.voted_for = vote_for
