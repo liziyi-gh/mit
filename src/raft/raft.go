@@ -300,7 +300,6 @@ func (rf *Raft) RemoveLogIndexLessThan(last_log_index int) bool {
 		}
 	}
 	rf.log = rf.log[reserve_logs_position:]
-	rf.persist()
 	return true
 }
 
@@ -348,8 +347,11 @@ func (rf *Raft) persist() {
 	e.Encode(rf.current_term)
 	e.Encode(rf.voted_for)
 	e.Encode(rf.log)
+	e.Encode(rf.last_log_term_in_snapshot)
+	e.Encode(rf.last_log_index_in_snapshot)
+	// FIXME: snapshot_data too large?
+	// e.Encode(rf.snapshot_data)
 	data := w.Bytes()
-	// FIXME: add snapshot
 	rf.persister.SaveRaftState(data)
 }
 
@@ -364,16 +366,37 @@ func (rf *Raft) readPersist(data []byte) {
 	var current_term int
 	var vote_for int
 	logs := make([]Log, 0)
-	// FIXME: add snapshot
-	if d.Decode(&current_term) != nil ||
-		d.Decode(&vote_for) != nil ||
-		d.Decode(&logs) != nil {
+	var last_log_term_in_snapshot int
+	var last_log_index_in_snapshot int
+	// FIXME: snapshot_data too large?
+	// var snapshot_data []byte
+
+	decode_ok1 := d.Decode(&current_term) != nil &&
+		d.Decode(&vote_for) != nil &&
+		d.Decode(&logs) != nil
+	decode_ok2 := d.Decode(&last_log_term_in_snapshot) != nil &&
+		d.Decode(&last_log_index_in_snapshot) != nil //&&
+		//d.Decode(&snapshot_data) != nil
+	decode_ok := decode_ok1 && decode_ok2
+
+	if !decode_ok {
 		log.Println("read persistent error")
-	} else {
-		rf.current_term = current_term
-		rf.voted_for = vote_for
-		rf.log = logs
+		return
 	}
+
+	rf.current_term = current_term
+	rf.voted_for = vote_for
+	rf.log = logs
+	rf.last_log_term_in_snapshot = last_log_term_in_snapshot
+	rf.last_log_index_in_snapshot = last_log_index_in_snapshot
+	//rf.snapshot_data = snapshot_data
+	// command := ApplyMsg{
+	// 	SnapshotValid: true,
+	// 	Snapshot:      snapshot_data,
+	// 	SnapshotTerm:  last_log_term_in_snapshot,
+	// 	SnapshotIndex: last_log_index_in_snapshot,
+	// }
+	// rf.internal_apply_chan <- command
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
