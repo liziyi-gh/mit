@@ -1517,7 +1517,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		}
 
 		if reply.SUCCESS {
-			// TODO: why can not delete this success append?
+			// FIXME: why can not delete this success append?
 			// something about the lock? it's not happen every time.
 			rf.successAppend(server, this_round_term, args)
 			goto release_lock_and_return
@@ -1654,7 +1654,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
-	log.Printf("Kill one Raft server")
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	log.Println("Kill Raft server", rf.me)
 }
 
 func (rf *Raft) killed() bool {
