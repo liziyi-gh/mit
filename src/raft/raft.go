@@ -371,6 +371,7 @@ func (rf *Raft) readPersist(data []byte) {
 	// FIXME: snapshot_data too large?
 	// var snapshot_data []byte
 	// FIXME: why decode failed?
+	// TODO: should add check code for production enviroment
 
 	ok := d.Decode(&current_term) != nil
 	if !ok {
@@ -621,6 +622,9 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 
 func (rf *Raft) sendCommandToApplierFunction() {
 	for {
+		if rf.killed() {
+			return
+		}
 		new_command := <-rf.internal_apply_chan
 		log.Printf("Server[%d] get new command index %d", rf.me, new_command.CommandIndex)
 		rf.mu.Lock()
