@@ -27,7 +27,9 @@ do
     # go test -run TestSnapshotBasic2D -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotInstall2D -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotInstallUnreliable2D -race > ${TESTER_LOG_FILE}
-    go test -run TestSnapshotInstallCrash2D -race > ${TESTER_LOG_FILE}
+    # go test -run TestSnapshotInstallCrash2D -race > ${TESTER_LOG_FILE}
+    # go test -run TestSnapshotInstallUnCrash2D -race > ${TESTER_LOG_FILE}
+    go test -run TestSnapshotAllCrash2D -race > ${TESTER_LOG_FILE}
 
     tmp=$(rg FAIL ${TESTER_LOG_FILE})
     tmp2=$(rg "DATA RACE" ${TESTER_LOG_FILE})
