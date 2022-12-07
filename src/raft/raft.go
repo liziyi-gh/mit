@@ -200,7 +200,10 @@ func (rf *Raft) LogLength() int {
 
 // use this function with lock
 func (rf *Raft) GetLogTermByIndex(index int) int {
-	position, _ := rf.GetPositionByIndex(index)
+	position, ok := rf.GetPositionByIndex(index)
+	if !ok {
+		return 0
+	}
 	return rf.log[position].TERM
 }
 
@@ -411,7 +414,7 @@ func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 	if index <= rf.last_log_index_in_snapshot {
 		return
 	}
-	if index >= rf.commit_index_in_quorom || index >= rf.commit_index {
+	if index > rf.commit_index_in_quorom || index > rf.commit_index {
 		log.Println("Server[", rf.me, "] give up Snapshot, some log not commit")
 		go func() {
 			duration := 100
