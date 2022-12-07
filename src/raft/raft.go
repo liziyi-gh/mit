@@ -732,6 +732,8 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 			iter_self_log_position++
 			append_logs = append_logs[:len(append_logs)-1]
 		}
+		// if have all log, return true
+		return []Log{}, true
 	}
 
 	// prev log dismatched
@@ -766,6 +768,7 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 			rf.buildReplyForAppendEntryFailed(args, reply)
 			return
 		}
+		goto start_append_logs
 	}
 
 	// if have no log
@@ -1497,6 +1500,16 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		if reply.TERM > rf.current_term {
 			rf.becomeFollower(reply.TERM, -1)
 			goto release_lock_and_return
+		}
+
+		// if already append by other goroutine
+		if len(args.ENTRIES) == 0 {
+			goto release_lock_and_return
+		}
+		if len(args.ENTRIES) > 0 {
+			if args.ENTRIES[0].INDEX < rf.next_index[server] {
+				goto release_lock_and_return
+			}
 		}
 
 		// reply is false
