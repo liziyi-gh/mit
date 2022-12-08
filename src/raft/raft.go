@@ -388,14 +388,18 @@ func (rf *Raft) readPersist(data []byte) {
 	rf.log = logs
 
 	snapshot_data := rf.persister.ReadSnapshot()
-	rf.snapshot_data = snapshot_data
-	command := ApplyMsg{
-		SnapshotValid: true,
-		Snapshot:      snapshot_data,
-		SnapshotTerm:  last_log_term_in_snapshot,
-		SnapshotIndex: last_log_index_in_snapshot,
+	if snapshot_data != nil &&
+		last_log_index_in_snapshot > 0 &&
+		last_log_term_in_snapshot > 0 {
+		rf.snapshot_data = snapshot_data
+		command := ApplyMsg{
+			SnapshotValid: true,
+			Snapshot:      snapshot_data,
+			SnapshotTerm:  last_log_term_in_snapshot,
+			SnapshotIndex: last_log_index_in_snapshot,
+		}
+		rf.internal_apply_chan <- command
 	}
-	rf.internal_apply_chan <- command
 	return
 }
 
