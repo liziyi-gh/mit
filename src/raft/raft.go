@@ -364,40 +364,22 @@ func (rf *Raft) readPersist(data []byte) {
 	d := labgob.NewDecoder(r)
 	var current_term int
 	var vote_for int
-	logs := make([]Log, 0)
 	var last_log_term_in_snapshot int
 	var last_log_index_in_snapshot int
+	logs := make([]Log, 0)
 	// FIXME: why decode failed?
 	// TODO: should add check code for production enviroment
 
-	ok := d.Decode(&current_term) != nil
-	if !ok {
-		log.Println("decode current_term failed")
-		goto here
-	}
+	ok := d.Decode(&current_term) == nil &&
+		d.Decode(&vote_for) == nil &&
+		d.Decode(&last_log_term_in_snapshot) == nil &&
+		d.Decode(&last_log_index_in_snapshot) == nil &&
+		d.Decode(&logs) == nil
 
-	ok = d.Decode(&vote_for) != nil
 	if !ok {
-		log.Println("decode vote_for failed")
-		goto here
-	}
-
-	ok = d.Decode(&last_log_term_in_snapshot) != nil
-	if !ok {
-		log.Println("decode last_log_term_in_snapshot failed")
-		goto here
-	}
-
-	ok = d.Decode(&last_log_index_in_snapshot) != nil
-	if !ok {
-		log.Println("decode last_log_index_in_snapshot failed")
-		goto here
-	}
-
-	ok = d.Decode(&logs) != nil
-	if !ok {
-		log.Println("decode logs failed")
-		goto here
+		log.Println("decode persist failed")
+		panic("decode failed")
+		return
 	}
 
 	rf.current_term = current_term
@@ -406,18 +388,16 @@ func (rf *Raft) readPersist(data []byte) {
 	rf.last_log_index_in_snapshot = last_log_index_in_snapshot
 	rf.log = logs
 
-	// snapshot_data := rf.persister.ReadSnapshot()
-	// rf.snapshot_data = snapshot_data
-	// command := ApplyMsg{
-	// 	SnapshotValid: true,
-	// 	Snapshot:      snapshot_data,
-	// 	SnapshotTerm:  last_log_term_in_snapshot,
-	// 	SnapshotIndex: last_log_index_in_snapshot,
-	// }
-	// rf.internal_apply_chan <- command
+	snapshot_data := rf.persister.ReadSnapshot()
+	rf.snapshot_data = snapshot_data
+	command := ApplyMsg{
+		SnapshotValid: true,
+		Snapshot:      snapshot_data,
+		SnapshotTerm:  last_log_term_in_snapshot,
+		SnapshotIndex: last_log_index_in_snapshot,
+	}
+	rf.internal_apply_chan <- command
 	return
-here:
-	panic("failed")
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
