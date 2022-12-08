@@ -351,7 +351,6 @@ func (rf *Raft) persist() {
 	e.Encode(rf.log)
 	data := w.Bytes()
 	rf.persister.SaveStateAndSnapshot(data, rf.snapshot_data)
-	log.Println("server", rf.me, "write", data)
 }
 
 // restore previously persisted state.
@@ -383,15 +382,16 @@ func (rf *Raft) readPersist(data []byte) {
 
 	rf.current_term = current_term
 	rf.voted_for = vote_for
-	rf.last_log_term_in_snapshot = last_log_term_in_snapshot
-	rf.last_log_index_in_snapshot = last_log_index_in_snapshot
 	rf.log = logs
 
 	snapshot_data := rf.persister.ReadSnapshot()
 	if snapshot_data != nil &&
 		last_log_index_in_snapshot > 0 &&
 		last_log_term_in_snapshot > 0 {
+		rf.last_log_term_in_snapshot = last_log_term_in_snapshot
+		rf.last_log_index_in_snapshot = last_log_index_in_snapshot
 		rf.snapshot_data = snapshot_data
+		rf.commit_index = last_log_index_in_snapshot
 		command := ApplyMsg{
 			SnapshotValid: true,
 			Snapshot:      snapshot_data,
@@ -400,6 +400,8 @@ func (rf *Raft) readPersist(data []byte) {
 		}
 		rf.internal_apply_chan <- command
 	}
+	log.Println("Server", rf.me, "restore with",
+		current_term, vote_for, last_log_term_in_snapshot, last_log_index_in_snapshot, logs)
 	return
 }
 
@@ -408,6 +410,9 @@ func (rf *Raft) readPersist(data []byte) {
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 
 	// Your code here (2D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.last_applied = lastIncludedIndex
 
 	return true
 }
@@ -688,9 +693,13 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 
 	// discard the entire log
 	rf.RemoveLogIndexGreaterThan(0)
+	rf.last_log_term_in_snapshot = args.LAST_INCLUDED_TERM
+	rf.last_log_index_in_snapshot = args.LAST_INCLUDED_INDEX
+	rf.snapshot_data = args.DATA
+	rf.commit_index = args.LAST_INCLUDED_INDEX
+	rf.persist()
 
 	// restore state machine using snapshot contents,
-	// and load snapshot's cluster configuration
 	apply_msg := ApplyMsg{
 		SnapshotValid: true,
 		Snapshot:      args.DATA,
@@ -698,10 +707,6 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 		SnapshotIndex: args.LAST_INCLUDED_INDEX,
 	}
 	rf.apply_ch <- apply_msg
-	rf.last_log_term_in_snapshot = args.LAST_INCLUDED_TERM
-	rf.last_log_index_in_snapshot = args.LAST_INCLUDED_INDEX
-	rf.last_applied = args.LAST_INCLUDED_INDEX
-	rf.commit_index = args.LAST_INCLUDED_INDEX
 }
 
 func (rf *Raft) buildReplyForAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
