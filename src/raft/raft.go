@@ -367,7 +367,6 @@ func (rf *Raft) readPersist(data []byte) {
 	var last_log_term_in_snapshot int
 	var last_log_index_in_snapshot int
 	logs := make([]Log, 0)
-	// FIXME: why decode failed?
 	// TODO: should add check code for production enviroment
 
 	ok := d.Decode(&current_term) == nil &&
