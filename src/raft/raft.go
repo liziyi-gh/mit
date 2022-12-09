@@ -768,6 +768,9 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 			rf.RemoveLogIndexGreaterThan(rf.last_log_index_in_snapshot)
 			append_logs = append_logs[:snapshot_position]
 			return append_logs, true
+		} else if args.PREV_LOG_INDEX == rf.last_log_index_in_snapshot && args.PREV_LOG_TERM == rf.last_log_term_in_snapshot {
+			rf.RemoveLogIndexGreaterThan(rf.last_log_index_in_snapshot)
+			return append_logs, true
 		} else {
 			log.Printf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
 			return []Log{}, false
