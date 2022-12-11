@@ -631,13 +631,29 @@ func (rf *Raft) sendCommandToApplierFunction() {
 		new_command := <-rf.internal_apply_chan
 		log.Printf("Server[%d] get new command index %d", rf.me, new_command.CommandIndex)
 		rf.mu.Lock()
-		if new_command.CommandIndex > rf.commit_index {
+		if new_command.CommandValid && new_command.CommandIndex > rf.commit_index {
 			log.Printf("Server[%d] going to commit index %d", rf.me, new_command.CommandIndex)
 			rf.mu.Unlock()
 			rf.apply_ch <- new_command
 			log.Printf("Server[%d] commit index %d", rf.me, new_command.CommandIndex)
 			rf.mu.Lock()
 			rf.commit_index = new_command.CommandIndex
+			rf.mu.Unlock()
+			continue
+		}
+		// FIXME: should judge snapshot index?
+		if new_command.SnapshotValid {
+			rf.mu.Unlock()
+			rf.apply_ch <- new_command
+			rf.mu.Lock()
+			rf.RemoveLogIndexGreaterThan(0)
+			rf.last_log_term_in_snapshot = new_command.SnapshotTerm
+			rf.last_log_index_in_snapshot = new_command.SnapshotIndex
+			rf.snapshot_data = new_command.Snapshot
+			rf.commit_index = new_command.SnapshotIndex
+			rf.persist()
+			rf.mu.Unlock()
+			continue
 		}
 		rf.mu.Unlock()
 	}
@@ -694,20 +710,16 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 	log.Printf("Server[%d] got install snapshot request from [%d], last log index is %d", rf.me, args.LEADER_ID, args.LAST_INCLUDED_INDEX)
 
 	reply.TERM = rf.current_term
-	if rf.current_term != args.TERM {
-		log.Println("Reject install snapshot")
+	if rf.current_term > args.TERM {
+		log.Println("Reject install snapshot from old leader")
+		return
+	}
+	if args.LAST_INCLUDED_INDEX == rf.last_log_index_in_snapshot &&
+		args.LAST_INCLUDED_TERM == rf.last_log_term_in_snapshot {
 		return
 	}
 
 	log.Printf("Server[%d] install snapshot from [%d]", rf.me, args.LEADER_ID)
-
-	// discard the entire log
-	rf.RemoveLogIndexGreaterThan(0)
-	rf.last_log_term_in_snapshot = args.LAST_INCLUDED_TERM
-	rf.last_log_index_in_snapshot = args.LAST_INCLUDED_INDEX
-	rf.snapshot_data = args.DATA
-	rf.commit_index = args.LAST_INCLUDED_INDEX
-	rf.persist()
 
 	// restore state machine using snapshot contents,
 	apply_msg := ApplyMsg{
@@ -716,7 +728,7 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 		SnapshotTerm:  args.LAST_INCLUDED_TERM,
 		SnapshotIndex: args.LAST_INCLUDED_INDEX,
 	}
-	rf.apply_ch <- apply_msg
+	rf.internal_apply_chan <- apply_msg
 }
 
 func (rf *Raft) buildReplyForAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
