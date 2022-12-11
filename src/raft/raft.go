@@ -405,14 +405,24 @@ func (rf *Raft) readPersist(data []byte) {
 	return
 }
 
+func (rf *Raft) doCondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.last_applied = lastIncludedIndex
+}
+
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 
 	// Your code here (2D).
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	rf.last_applied = lastIncludedIndex
+	// cocurrent trying to hold lock, if 2 requestInstallSnasphot send nearly same time,
+	// one send to channel, and not enter this function yet,
+	// another requestInstallSnasphot hold the lock and trying to send to channel
+	// then requestInstallSnasphot hold the lock because consumer did not consume
+	// so it would cause dead lock
+	// what this function use for? I don't get it
+	go rf.doCondInstallSnapshot(lastIncludedTerm, lastIncludedIndex, snapshot)
 
 	return true
 }
@@ -1463,6 +1473,8 @@ release_lock_and_return:
 }
 
 func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
+	// FIXME: why sometimes this function run args nearly same time?
+	// just because schedule?
 	<-ch
 	defer func() { ch <- struct{}{} }()
 	rf.mu.Lock()
