@@ -1761,6 +1761,7 @@ func (rf *Raft) becomeLeader() {
 		}
 		go rf.handleAppendEntryForOneServer(i, rf.current_term)
 	}
+	// TODO: commit a no-op log to promise know commit index
 	log.Printf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
 	log.Println("leader log is ", rf.log)
 	return
