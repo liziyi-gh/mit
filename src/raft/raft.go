@@ -640,12 +640,7 @@ func (rf *Raft) sendCommandToApplierFunction() {
 		}
 		// FIXME: should judge snapshot index?
 		if new_command.SnapshotValid {
-			rf.RemoveLogIndexGreaterThan(0)
-			rf.last_log_term_in_snapshot = new_command.SnapshotTerm
-			rf.last_log_index_in_snapshot = new_command.SnapshotIndex
-			rf.snapshot_data = new_command.Snapshot
 			rf.commit_index = new_command.SnapshotIndex
-			rf.persist()
 			rf.mu.Unlock()
 			rf.apply_ch <- new_command
 			continue
@@ -715,6 +710,11 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 	}
 
 	log.Printf("Server[%d] install snapshot from [%d]", rf.me, args.LEADER_ID)
+	rf.RemoveLogIndexGreaterThan(0)
+	rf.last_log_term_in_snapshot = args.LAST_INCLUDED_TERM
+	rf.last_log_index_in_snapshot = args.LAST_INCLUDED_INDEX
+	rf.snapshot_data = args.DATA
+	rf.persist()
 
 	// restore state machine using snapshot contents,
 	apply_msg := ApplyMsg{
