@@ -775,6 +775,8 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 	}
 
 	// prev log dismatched
+	// FIXME: what if server used to be leader at previous term,
+	// and save some un commit log with snapshot?
 	if !matched {
 		if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
 			rf.RemoveLogIndexGreaterThan(0)
@@ -1553,6 +1555,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 				(reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM < rf.last_log_index_in_snapshot)) &&
 			(reply.LAST_LOG_INDEX_IN_SNAPSHOT != rf.last_log_index_in_snapshot ||
 				reply.LAST_LOG_TERM_IN_SNAPSHOT != rf.last_log_term_in_snapshot)
+		// FIXME: is there any else reason?
 
 		if need_snapshot {
 			rf.mu.Unlock()
