@@ -633,19 +633,13 @@ func (rf *Raft) sendCommandToApplierFunction() {
 		rf.mu.Lock()
 		if new_command.CommandValid && new_command.CommandIndex > rf.commit_index {
 			log.Printf("Server[%d] going to commit index %d", rf.me, new_command.CommandIndex)
-			rf.mu.Unlock()
-			rf.apply_ch <- new_command
-			log.Printf("Server[%d] commit index %d", rf.me, new_command.CommandIndex)
-			rf.mu.Lock()
 			rf.commit_index = new_command.CommandIndex
 			rf.mu.Unlock()
+			rf.apply_ch <- new_command
 			continue
 		}
 		// FIXME: should judge snapshot index?
 		if new_command.SnapshotValid {
-			rf.mu.Unlock()
-			rf.apply_ch <- new_command
-			rf.mu.Lock()
 			rf.RemoveLogIndexGreaterThan(0)
 			rf.last_log_term_in_snapshot = new_command.SnapshotTerm
 			rf.last_log_index_in_snapshot = new_command.SnapshotIndex
@@ -653,6 +647,7 @@ func (rf *Raft) sendCommandToApplierFunction() {
 			rf.commit_index = new_command.SnapshotIndex
 			rf.persist()
 			rf.mu.Unlock()
+			rf.apply_ch <- new_command
 			continue
 		}
 		rf.mu.Unlock()
