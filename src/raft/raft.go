@@ -1488,7 +1488,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 	}
 
 	// NOTE: if use as heartbeat, delete this
-	if !rf.HaveAnyLog() {
+	if !rf.HaveAnyLog() && !rf.HasSnapshot() {
 		rf.mu.Unlock()
 		return
 	}
