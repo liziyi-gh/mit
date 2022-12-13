@@ -304,17 +304,15 @@ func (rf *Raft) RemoveLogIndexLessThan(last_log_index int) bool {
 }
 
 // use this function with lock
-func (rf *Raft) SetTerm(new_term int) bool {
+func (rf *Raft) SetTerm(new_term int) {
 	rf.current_term = new_term
 	rf.persist()
-	return true
 }
 
 // use this function with lock
-func (rf *Raft) SetVotefor(vote_for int) bool {
+func (rf *Raft) SetVotefor(vote_for int) {
 	rf.voted_for = vote_for
 	rf.persist()
-	return true
 }
 
 // return currentTerm and whether this server
@@ -451,11 +449,8 @@ func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 	rf.snapshot_data = snapshot
 	rf.last_log_index_in_snapshot = index
 	rf.last_log_term_in_snapshot = rf.GetLogTermByIndex(index)
-	log.Println("Server[", rf.me, "] Snapshot index is ", index)
-	log.Println("Server[", rf.me, "] have log before Snapshot", rf.log)
 	rf.RemoveLogIndexLessThan(index + 1)
 	rf.persist()
-	log.Println("Server[", rf.me, "] have log after Snapshot", rf.log)
 }
 
 // the service says it has created a snapshot that has
@@ -1575,7 +1570,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 			continue
 		}
 		// lock has been release here, no code below
-	} // end reply false for
+	}
 
 release_lock_and_return:
 	rf.mu.Unlock()
