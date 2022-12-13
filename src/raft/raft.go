@@ -291,6 +291,7 @@ func (rf *Raft) RemoveLogIndexGreaterThan(last_log_index int) bool {
 
 // use this function with lock
 // remove all logs that index < last_log_index
+// is caller's job to call rf.persist
 func (rf *Raft) RemoveLogIndexLessThan(last_log_index int) bool {
 	reserve_logs_position := rf.LogLength()
 	for i := 0; i < rf.LogLength(); i++ {
@@ -373,8 +374,7 @@ func (rf *Raft) readPersist(data []byte) {
 		d.Decode(&logs) == nil
 
 	if !ok {
-		log.Println("decode persist failed")
-		panic("decode failed")
+		log.Println("Error: decode persist failed")
 		return
 	}
 
@@ -1413,7 +1413,6 @@ start_append_logs:
 
 // use with the lock
 func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
-	// TODO: reduce rpc number, from latest_log to next_index
 	latest_log := *rf.GetLatestLogRef()
 	append_logs := []Log{latest_log}
 	prev_log_index := latest_log.INDEX - 1
@@ -1528,16 +1527,14 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 			goto release_lock_and_return
 		}
 
-		if reply.SUCCESS {
-			// FIXME: why can not delete this success append?
-			// something about the lock? it's not happen every time.
-			rf.successAppend(server, this_round_term, args)
-			goto release_lock_and_return
-		}
-
 		// new term case 2, know from peer
 		if reply.TERM > rf.current_term {
 			rf.becomeFollower(reply.TERM, -1)
+			goto release_lock_and_return
+		}
+
+		if reply.SUCCESS {
+			rf.successAppend(server, this_round_term, args)
 			goto release_lock_and_return
 		}
 
