@@ -1447,8 +1447,8 @@ func (rf *Raft) sendSnapshot(server int, this_round_term int) {
 		LAST_INCLUDED_TERM:  rf.last_log_term_in_snapshot,
 		DATA:                rf.snapshot_data,
 	}
-	reply := &RequestInstallSnapshotReply{}
 	rf.mu.Unlock()
+	reply := &RequestInstallSnapshotReply{}
 
 	for failed_times := 0; failed_times < rf.rpc_retry_times; failed_times++ {
 		ok := rf.sendSnapshotOnetime(server, args, reply)
