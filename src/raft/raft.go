@@ -1256,7 +1256,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 			log.Printf("Server[%d] got pre vote reply, granted is %t", rf.me, pre_vote_reply.VOTE_GRANTED)
 			rf.mu.Lock()
 			if pre_vote_reply.TERM > rf.current_term {
-				rf.becomeFollower(pre_vote_reply.TERM, -1)
+				rf.becomeFollower(pre_vote_reply.TERM, None)
 				rf.mu.Unlock()
 				return false
 			}
@@ -1527,7 +1527,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 
 		// new term case 2, know from peer
 		if reply.TERM > rf.current_term {
-			rf.becomeFollower(reply.TERM, -1)
+			rf.becomeFollower(reply.TERM, None)
 			goto release_lock_and_return
 		}
 
