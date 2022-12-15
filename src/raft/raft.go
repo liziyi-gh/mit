@@ -647,11 +647,10 @@ func (rf *Raft) sendCommandToApplierFunction() {
 // use this function with lock
 // TODO: should refactor this, mix heartbeat and append log
 func (rf *Raft) sendOneRoundHeartBeat() {
-	i := 0
 	args := make([]RequestAppendEntryArgs, rf.all_server_number)
 	reply := make([]RequestAppendEntryReply, rf.all_server_number)
 
-	for i = 0; i < rf.all_server_number; i++ {
+	for i := 0; i < rf.all_server_number; i++ {
 		// don't send heart beat to myself
 		if i == rf.me {
 			continue
@@ -1478,7 +1477,6 @@ release_lock_and_return:
 func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
 	// FIXME: why sometimes this function run args nearly same time?
 	// just because schedule?
-	<-ch
 	defer func() { ch <- struct{}{} }()
 	rf.mu.Lock()
 
@@ -1575,7 +1573,7 @@ release_lock_and_return:
 }
 
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
-	// NOTE: if there is too much worker, can not pass cocurrent test.
+	// NOTE: if there is too much worker, can not pass concurrent test.
 	worker_number := 3
 	ch := make(chan struct{}, worker_number)
 	for i := 0; i < worker_number; i++ {
@@ -1596,8 +1594,10 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 
 		select {
 		case <-time.After(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond):
+			<-ch
 			go rf.sendNewestLog(server, this_round_term, ch)
 		case <-rf.append_entry_chan[server]:
+			<-ch
 			go rf.sendNewestLog(server, this_round_term, ch)
 		}
 	}
