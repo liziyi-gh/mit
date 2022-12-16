@@ -1823,7 +1823,11 @@ func (rf *Raft) ticker() {
 			log.Printf("Server[%d] did not finish pre vote in time, become follower", rf.me)
 
 		case CANDIDATE:
-			rf.becomeCandidate(rf.current_term + 1)
+			if rf.enable_feature_prevote {
+				rf.becomeFollower(rf.current_term, None)
+			} else {
+				rf.becomeCandidate(rf.current_term + 1)
+			}
 			log.Printf("Server[%d] did not finish vote in time, candidate term + 1, new term is %d", rf.me, rf.current_term)
 		}
 
