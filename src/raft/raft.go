@@ -218,13 +218,13 @@ func (rf *Raft) GetLogCommandByIndex(index int) (interface{}, bool) {
 }
 
 // use this function with lock
-func (rf *Raft) HaveAnyLog() bool {
+func (rf *Raft) hasLog() bool {
 	return rf.LogLength() >= 1
 }
 
 // use this function with lock
 func (rf *Raft) GetLatestLogRef() *Log {
-	if rf.HaveAnyLog() {
+	if rf.hasLog() {
 		return &rf.log[len(rf.log)-1]
 	}
 	return nil
@@ -232,7 +232,7 @@ func (rf *Raft) GetLatestLogRef() *Log {
 
 // use this function with lock
 func (rf *Raft) GetLatestLogIndex() int {
-	if rf.HaveAnyLog() {
+	if rf.hasLog() {
 		return rf.log[len(rf.log)-1].INDEX
 	}
 	return 0
@@ -240,7 +240,7 @@ func (rf *Raft) GetLatestLogIndex() int {
 
 // use this function with lock
 func (rf *Raft) GetLatestLogIndexIncludeSnapshot() int {
-	if rf.HaveAnyLog() {
+	if rf.hasLog() {
 		return rf.log[len(rf.log)-1].INDEX
 	}
 	if rf.last_log_index_in_snapshot > 0 {
@@ -251,7 +251,7 @@ func (rf *Raft) GetLatestLogIndexIncludeSnapshot() int {
 
 // use this function with lock
 func (rf *Raft) GetLatestLogTermIncludeSnapshot() int {
-	if rf.HaveAnyLog() {
+	if rf.hasLog() {
 		return rf.log[len(rf.log)-1].TERM
 	}
 	if rf.last_log_term_in_snapshot > 0 {
@@ -428,7 +428,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if !rf.HaveAnyLog() {
+	if !rf.hasLog() {
 		return
 	}
 	if index < rf.log[0].INDEX {
@@ -462,7 +462,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	go rf.doSnapshot(index, snapshot)
 }
 
-func (rf *Raft) HasSnapshot() bool {
+func (rf *Raft) hasSnapshot() bool {
 	return rf.last_log_index_in_snapshot > 0
 }
 
@@ -813,7 +813,7 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 	append_logs := args.ENTRIES
 	ok := false
 
-	if rf.HaveAnyLog() {
+	if rf.hasLog() {
 		append_logs, ok = rf.sliceLogToAlign(args)
 		if !ok {
 			rf.buildReplyForAppendEntryFailed(args, reply)
@@ -823,7 +823,7 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 	}
 
 	// if have no log
-	if len(append_logs) > 0 && !rf.HaveAnyLog() {
+	if len(append_logs) > 0 && !rf.hasLog() {
 		has_snapshot_log, snapshot_position := rf.hasSnapshotLog(append_logs)
 		if has_snapshot_log {
 			rf.RemoveLogIndexGreaterThan(rf.last_log_index_in_snapshot)
@@ -882,7 +882,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 			return
 		}
 		// prevent heartbeat commit some logs that should not commit
-		if rf.HaveAnyLog() {
+		if rf.hasLog() {
 			if matched && args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
 				log.Print("Server[", rf.me, "] going to commit heartbeat args:", args)
 				log.Print("Server[", rf.me, "] have log", rf.log)
@@ -913,7 +913,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// I have newer log
-	if rf.HaveAnyLog() {
+	if rf.hasLog() {
 		my_latest_log := rf.GetLatestLogRef()
 
 		if my_latest_log.TERM > args.PREV_LOG_TERM {
@@ -927,7 +927,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		}
 	}
 
-	if rf.HasSnapshot() && !rf.HaveAnyLog() {
+	if rf.hasSnapshot() && !rf.hasLog() {
 		if rf.last_log_term_in_snapshot > args.PREV_LOG_TERM {
 			log.Printf("Server[%d] reject pre vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
 			return
@@ -982,7 +982,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// I have newer log
-	if rf.HaveAnyLog() {
+	if rf.hasLog() {
 		my_latest_log := rf.GetLatestLogRef()
 
 		if my_latest_log.TERM > args.PREV_LOG_TERM {
@@ -996,7 +996,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		}
 	}
 
-	if rf.HasSnapshot() && !rf.HaveAnyLog() {
+	if rf.hasSnapshot() && !rf.hasLog() {
 		if rf.last_log_term_in_snapshot > args.PREV_LOG_TERM {
 			log.Printf("Server[%d] reject pre vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
 			return
@@ -1059,7 +1059,7 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 	rf.mu.Lock()
 	args.TERM = this_round_term
 	args.CANDIDATE_ID = rf.me
-	if rf.HaveAnyLog() || rf.HasSnapshot() {
+	if rf.hasLog() || rf.hasSnapshot() {
 		args.PREV_LOG_INDEX = rf.GetLatestLogIndexIncludeSnapshot()
 		args.PREV_LOG_TERM = rf.GetLatestLogTermIncludeSnapshot()
 	} else {
@@ -1112,7 +1112,7 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 	args.TERM = this_round_term + 1
 	args.CANDIDATE_ID = rf.me
 
-	if rf.HaveAnyLog() || rf.HasSnapshot() {
+	if rf.hasLog() || rf.hasSnapshot() {
 		args.PREV_LOG_INDEX = rf.GetLatestLogIndexIncludeSnapshot()
 		args.PREV_LOG_TERM = rf.GetLatestLogTermIncludeSnapshot()
 	} else {
@@ -1353,7 +1353,7 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 	new_prev_log_position, ok := rf.GetPositionByIndex(args.PREV_LOG_INDEX - 1)
 	new_entries := make([]Log, 0)
 	if !ok {
-		if rf.HaveAnyLog() {
+		if rf.hasLog() {
 			if args.PREV_LOG_INDEX <= rf.log[0].INDEX {
 				new_prev_log_position = -1
 				log.Println("leader log is", rf.log)
@@ -1413,7 +1413,7 @@ start_append_logs:
 		args.PREV_LOG_TERM = rf.GetLogTermByIndex(new_prev_log_idx)
 		args.PREV_LOG_INDEX = new_prev_log_idx
 	} else {
-		if rf.HasSnapshot() {
+		if rf.hasSnapshot() {
 			args.PREV_LOG_INDEX = rf.last_log_index_in_snapshot
 			args.PREV_LOG_TERM = rf.last_log_term_in_snapshot
 		} else {
@@ -1500,11 +1500,12 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 	}
 
 	// NOTE: if use as heartbeat, delete this
-	if !rf.HaveAnyLog() && !rf.HasSnapshot() {
+	if !rf.hasLog() && !rf.hasSnapshot() {
 		rf.mu.Unlock()
 		return
 	}
 
+	// FIXME:
 	args := rf.buildNewestArgs()
 	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for server", server, "args is ", args)
 	failed_times := 0
@@ -1554,7 +1555,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		failed_times++
 		log.Print("Server[", server, "] failed time: ", failed_times, ", args is ", args)
 
-		need_snapshot := rf.HasSnapshot() &&
+		need_snapshot := rf.hasSnapshot() &&
 			((rf.next_index[server] <= rf.last_log_index_in_snapshot) ||
 				(reply.NEWST_LOG_INDEX_OF_PREV_LOG_TERM < rf.last_log_index_in_snapshot)) &&
 			(reply.LAST_LOG_INDEX_IN_SNAPSHOT != rf.last_log_index_in_snapshot ||
