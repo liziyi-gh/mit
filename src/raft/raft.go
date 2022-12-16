@@ -666,25 +666,38 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 	}
 }
 
-func (rf *Raft) sendHeartBeat(this_term int) {
+func (rf *Raft) handleOneServerHeartbeat(server int, this_round_term int) {
+	// TODO: how many wokers should heartbeat have?
+	worker_number := 1 + (rf.timeout_rand_ms+rf.timeout_const_ms)/rf.heartbeat_interval_ms
+	ch := make(chan struct{}, worker_number)
+	for i := 0; i < worker_number; i++ {
+		ch <- struct{}{}
+	}
 	for {
 		if rf.killed() {
 			return
 		}
 		time.Sleep(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond)
 		rf.mu.Lock()
-		if !rf.statusIs(LEADER) {
+		if rf.current_term != this_round_term {
 			rf.mu.Unlock()
 			return
 		}
-
-		if rf.current_term != this_term {
-			rf.mu.Unlock()
-			return
-		}
-
-		rf.sendOneRoundHeartBeat()
 		rf.mu.Unlock()
+		<-ch
+		go func() {
+			rf.mu.Lock()
+			args := &RequestAppendEntryArgs{}
+			reply := &RequestAppendEntryReply{}
+			args.TERM = rf.current_term
+			args.LEADER_ID = rf.me
+			args.LEADER_COMMIT = rf.commit_index
+			args.PREV_LOG_INDEX = rf.GetLatestLogIndexIncludeSnapshot()
+			args.PREV_LOG_TERM = rf.GetLatestLogTermIncludeSnapshot()
+			rf.mu.Unlock()
+			rf.sendOneAppendEntry(server, args, reply)
+			ch <- struct{}{}
+		}()
 	}
 }
 
@@ -1738,7 +1751,12 @@ func (rf *Raft) becomeLeader() {
 
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
-	go rf.sendHeartBeat(rf.current_term)
+	for i := 0; i < rf.all_server_number; i++ {
+		if i == rf.me {
+			continue
+		}
+		go rf.handleOneServerHeartbeat(i, rf.current_term)
+	}
 
 	go rf.leaderUpdateCommitIndex(rf.current_term)
 
