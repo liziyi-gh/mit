@@ -612,6 +612,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 			CommandIndex: idx,
 		}
 		log.Printf("Server[%d] send index %d to internal channel", rf.me, tmp.CommandIndex)
+		// FIXME: use channel comunicate can been block
 		rf.internal_apply_chan <- tmp
 		rf.commit_index_in_quorom = idx
 	}
@@ -1853,8 +1854,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.timeout_rand_ms = 150
 	rf.match_index = make([]int, rf.all_server_number)
 	rf.next_index = make([]int, rf.all_server_number)
-	// NOTE: this is an arbitray number
-	rf.chanel_buffer_size = 1000
+	// FIXME: this is an arbitray number
+	rf.chanel_buffer_size = 100000
 
 	rf.recently_commit = make(chan struct{}, rf.chanel_buffer_size)
 	rf.internal_apply_chan = make(chan ApplyMsg, rf.chanel_buffer_size)
@@ -1866,7 +1867,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	for i := 0; i < rf.all_server_number; i++ {
 		rf.next_index[i] = 1
-		// NOTE: this is an arbitray number
 		rf.append_entry_chan[i] = make(chan struct{}, rf.chanel_buffer_size)
 	}
 
