@@ -1426,24 +1426,29 @@ start_append_logs:
 
 // use with the lock
 func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
-	latest_log := *rf.GetLatestLogRef()
-	append_logs := []Log{latest_log}
-	prev_log_index := latest_log.INDEX - 1
-	prev_log_term := 0
-	if prev_log_index > 0 {
-		prev_log_term = rf.GetLogTermByIndex(prev_log_index)
-	}
 	args := &RequestAppendEntryArgs{
-		TERM:           rf.current_term,
-		LEADER_ID:      rf.me,
-		ENTRIES:        append_logs,
-		LEADER_COMMIT:  rf.commit_index,
-		PREV_LOG_INDEX: prev_log_index,
-		PREV_LOG_TERM:  prev_log_term,
-		UUID:           rand.Uint64(),
+		TERM:          rf.current_term,
+		LEADER_ID:     rf.me,
+		LEADER_COMMIT: rf.commit_index,
+		UUID:          rand.Uint64(),
 	}
+	if !rf.hasLog() {
+		return args
+	} else {
+		latest_log := *rf.GetLatestLogRef()
+		append_logs := []Log{latest_log}
+		prev_log_index := latest_log.INDEX - 1
+		prev_log_term := 0
+		if prev_log_index > 0 {
+			prev_log_term = rf.GetLogTermByIndex(prev_log_index)
+		}
 
-	return args
+		args.ENTRIES = append_logs
+		args.PREV_LOG_INDEX = prev_log_index
+		args.PREV_LOG_TERM = prev_log_term
+
+		return args
+	}
 }
 
 func (rf *Raft) sendSnapshotOnetime(server int, args *RequestInstallSnapshotArgs, reply *RequestInstallSnapshotReply) bool {
