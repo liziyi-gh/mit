@@ -1184,7 +1184,7 @@ func (rf *Raft) newVote(this_round_term int) {
 		go rf.requestOneServerVote(i, reply, this_round_term)
 	}
 
-	timeout_ms := 10000
+	timeout_ms := 1000 * 30
 
 	for {
 		if rf.killed() {
@@ -1258,7 +1258,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 		go rf.requestOneServerPreVote(i, reply, this_round_term)
 	}
 
-	timeout_ms := 10000
+	timeout_ms := 1000 * 30
 
 	for {
 		if rf.killed() {
