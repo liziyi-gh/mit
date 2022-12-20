@@ -668,7 +668,8 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 
 func (rf *Raft) handleOneServerHeartbeat(server int, this_round_term int) {
 	// TODO: how many wokers should heartbeat have?
-	worker_number := 1 + (rf.timeout_rand_ms+rf.timeout_const_ms)/rf.heartbeat_interval_ms
+	// FIXME: this is an arbitray number
+	worker_number := 100
 	ch := make(chan struct{}, worker_number)
 	for i := 0; i < worker_number; i++ {
 		ch <- struct{}{}
@@ -1131,7 +1132,7 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 		ok := false
 
 		if failed_times > rf.rpc_retry_times {
-			log.Printf("Server[%d] requestOneServerPreVote failed too many times", rf.me)
+			log.Printf("Server[%d] quit requestOneServerPreVote at term %d for Server[%d], failed too many times", rf.me, this_round_term, index)
 			return
 		}
 
@@ -1183,7 +1184,7 @@ func (rf *Raft) newVote(this_round_term int) {
 		go rf.requestOneServerVote(i, reply, this_round_term)
 	}
 
-	timeout_ms := rf.timeout_const_ms + rf.timeout_rand_ms
+	timeout_ms := 10000
 
 	for {
 		if rf.killed() {
@@ -1192,7 +1193,7 @@ func (rf *Raft) newVote(this_round_term int) {
 
 		select {
 		case vote_reply := <-reply:
-			log.Printf("Server[%d] got vote reply, granted is %t", rf.me, vote_reply.VOTE_GRANTED)
+			log.Printf("Server[%d] got vote reply at term %d, granted is %t", rf.me, this_round_term, vote_reply.VOTE_GRANTED)
 			rf.mu.Lock()
 			if vote_reply.TERM > rf.current_term {
 				rf.becomeCandidate(vote_reply.TERM)
@@ -1257,7 +1258,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 		go rf.requestOneServerPreVote(i, reply, this_round_term)
 	}
 
-	timeout_ms := rf.timeout_const_ms + rf.timeout_rand_ms
+	timeout_ms := 10000
 
 	for {
 		if rf.killed() {
@@ -1267,7 +1268,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 		select {
 		case pre_vote_reply := <-reply:
 			got_reply++
-			log.Printf("Server[%d] got pre vote reply, granted is %t", rf.me, pre_vote_reply.VOTE_GRANTED)
+			log.Printf("Server[%d] got pre vote reply at term %d, granted is %t", rf.me, this_round_term, pre_vote_reply.VOTE_GRANTED)
 			rf.mu.Lock()
 			if pre_vote_reply.TERM > rf.current_term {
 				rf.becomeFollower(pre_vote_reply.TERM, None)
@@ -1320,7 +1321,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 			return true
 
 		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
-			log.Printf("Server[%d] quit pre-vote goroutine", rf.me)
+			log.Printf("Server[%d] did not finish prevote in time", rf.me)
 			return false
 		}
 	}
@@ -1510,7 +1511,6 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		return
 	}
 
-	// FIXME:
 	args := rf.buildNewestArgs()
 	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for server", server, "args is ", args)
 	failed_times := 0
@@ -1718,7 +1718,7 @@ func (rf *Raft) becomeCandidate(new_term int) {
 	rf.SetTerm(new_term)
 	rf.SetVotefor(None)
 	rf.status = CANDIDATE
-	log.Printf("Server[%d] become candidate", rf.me)
+	log.Printf("Server[%d] become candidate at term %d", rf.me, new_term)
 	go rf.newVote(rf.current_term)
 }
 
@@ -1729,7 +1729,7 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 		return
 	}
 	if rf.status != FOLLOWER {
-		log.Printf("Server[%d] become follower", rf.me)
+		log.Printf("Server[%d] become follower, new leader is %d, new term is %d", rf.me, new_leader, new_term)
 	}
 	rf.status = FOLLOWER
 
@@ -1825,16 +1825,16 @@ func (rf *Raft) ticker() {
 				rf.becomeCandidate(rf.current_term + 1)
 			}
 		case PRECANDIDATE:
-			rf.becomeFollower(rf.current_term, rf.leader_id)
+			rf.becomePreCandidate()
 			log.Printf("Server[%d] did not finish pre vote in time, become follower", rf.me)
 
 		case CANDIDATE:
 			if rf.enable_feature_prevote {
-				rf.becomeFollower(rf.current_term, None)
+				rf.becomePreCandidate()
 			} else {
 				rf.becomeCandidate(rf.current_term + 1)
 			}
-			log.Printf("Server[%d] did not finish vote in time, candidate term + 1, new term is %d", rf.me, rf.current_term)
+			log.Printf("Server[%d] did not finish vote in time, new term is %d", rf.me, rf.current_term)
 		}
 
 		rf.mu.Unlock()
