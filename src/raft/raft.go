@@ -1102,6 +1102,7 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 		rf.mu.Unlock()
 		return
 	}
+	log.Printf("Server[%d] quit requestOneServerVote at term %d for Server[%d], failed too many times", rf.me, this_round_term, index)
 	return
 }
 
