@@ -1,4 +1,7 @@
+test_path=/tmp/tmp-fs
+
 rm ./*.log
+rm -f ${test_path}/*.log
 
 echo "start test at "
 date
@@ -7,12 +10,13 @@ i=0
 while [ -z "${tmp}" ]
 do
     ((i=i+1))
-    TESTER_LOG_FILE=/tmp/tmp-fs/tester.${i}.log
-    RAFT_LOG_FILE=/tmp/tmp-fs/raft.log
+    TESTER_LOG_FILE=${test_path}/tester.${i}.log
+    RAFT_LOG_FILE=${test_path}/raft.log
     # go test -run 2A > ${TESTER_LOG_FILE}
+    # go test -run TestReElection2A -race > ${TESTER_LOG_FILE}
     # go test -run 2B > ${TESTER_LOG_FILE}
     # go test -run 2C > ${TESTER_LOG_FILE}
-    go test -run 2D > ${TESTER_LOG_FILE}
+    # go test -run 2D > ${TESTER_LOG_FILE}
     # go test -run TestBasicAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestFailAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestRPCBytes2B -race > ${TESTER_LOG_FILE}
