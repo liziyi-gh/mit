@@ -126,64 +126,6 @@ func TestManyElections2A(t *testing.T) {
 	cfg.end()
 }
 
-func TestOnlyOneElectionLZY(t *testing.T) {
-	servers := 3
-	cfg := make_config(t, servers, false, false)
-	defer cfg.cleanup()
-
-	cfg.begin("Test (2A): TestOnlyOneElection")
-
-	// is a leader elected?
-	leader1 := cfg.checkOneLeader()
-	cfg.one(101, servers-1, false)
-
-	server2 := (leader1 + 1) % servers
-	server3 := (leader1 + 2) % servers
-	cfg.disconnect(server2)
-	cfg.disconnect(server3)
-
-	alot_of_logs := 2
-
-	// submit lots of commands that won't commit
-	for i := 0; i < alot_of_logs; i++ {
-		cfg.rafts[leader1].Start(rand.Int())
-	}
-
-	time.Sleep(RaftElectionTimeout / 2)
-
-	cfg.disconnect(leader1)
-
-	cfg.connect(server2)
-	cfg.connect(server3)
-	for i := 0; i < alot_of_logs; i++ {
-		cfg.one(rand.Int(), 2, true)
-	}
-
-	leader2 := cfg.checkOneLeader()
-	other := server2
-	if leader2 == server2 {
-		other = server3
-	}
-
-	cfg.disconnect(other)
-
-	for i := 0; i < alot_of_logs; i++ {
-		cfg.rafts[leader2].Start(rand.Int())
-	}
-
-	cfg.disconnect(leader2)
-	cfg.connect(leader1)
-	cfg.connect(other)
-	time.Sleep(RaftElectionTimeout / 2)
-	leader3 := cfg.checkOneLeader()
-
-	if leader3 != other {
-		t.Fatalf("wrong leader")
-	}
-
-	cfg.end()
-}
-
 func TestBasicAgree2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
@@ -338,38 +280,25 @@ func TestFailAgree2B(t *testing.T) {
 
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
-	fmt.Printf("leader is %d\n", leader)
 	cfg.disconnect((leader + 1) % servers)
-	current_time := time.Now()
-	fmt.Printf("disconnect server time is %s\n", current_time.Format("2006-01-02 15:04:05.000000"))
-	fmt.Printf("disconnect %d\n", (leader+1)%servers)
 
 	// the leader and remaining follower should be
 	// able to agree despite the disconnected follower.
 	cfg.one(102, servers-1, false)
-	fmt.Println("102")
 	cfg.one(103, servers-1, false)
-	fmt.Println("103")
 	time.Sleep(RaftElectionTimeout)
 	cfg.one(104, servers-1, false)
-	fmt.Println("104")
 	cfg.one(105, servers-1, false)
-	fmt.Println("105")
 
 	// re-connect
 	cfg.connect((leader + 1) % servers)
-	current_time = time.Now()
-	fmt.Printf("reconnect server time is %s\n", current_time.Format("2006-01-02 15:04:05.000000"))
-	fmt.Printf("%d reconnect\n", (leader+1)%servers)
 
 	// the full set of servers should preserve
 	// previous agreements, and be able to agree
 	// on new commands.
 	cfg.one(106, servers, true)
-	fmt.Println("106")
 	time.Sleep(RaftElectionTimeout)
 	cfg.one(107, servers, true)
-	fmt.Println("107")
 
 	cfg.end()
 }
