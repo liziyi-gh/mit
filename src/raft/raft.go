@@ -1799,7 +1799,6 @@ func (rf *Raft) ticker() {
 		}
 
 		duration := rand.Intn(rf.timeout_rand_ms) + rf.timeout_const_ms
-		log.Printf("Server[%d] ticker: new wait time is %d(ms)", rf.me, duration)
 
 		time.Sleep(time.Duration(duration) * time.Millisecond)
 

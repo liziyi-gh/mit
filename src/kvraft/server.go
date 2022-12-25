@@ -4,13 +4,14 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
 )
 
-const Debug = false
+const Debug = true
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
@@ -19,11 +20,23 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Type      string
+	Key       string
+	Value     string
+	RequestID uint64
+}
+
+type applyNotify struct {
+	ch      chan struct{}
+	op_type string
+	key     string
+	value   string
+	err     Err
+	done    bool
 }
 
 type KVServer struct {
@@ -36,14 +49,154 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	chanel_buffer int
+	data          map[string]string
+	notifier      map[uint64](*applyNotify)
+}
+
+func (kv *KVServer) sendOp(op Op, ch chan string, notify_ch chan struct{}) {
+	retry_ms := 1000
+	retry_times := 10
+	for i := 0; i < retry_times; i++ {
+		_, _, is_leader := kv.rf.Start(op)
+		if !is_leader {
+			ch <- "Not leader"
+		}
+		select {
+		case <-time.After(time.Duration(retry_ms) * time.Millisecond):
+			continue
+		case <-notify_ch:
+			return
+		}
+	}
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	op := Op{
+		Type:      "Get",
+		Key:       args.Key,
+		RequestID: args.RequestID,
+	}
+	ch := make(chan string)
+	notify_ch := make(chan struct{})
+	notify := &applyNotify{
+		ch: notify_ch,
+	}
+
+	kv.mu.Lock()
+	kv.notifier[args.RequestID] = notify
+	kv.mu.Unlock()
+
+	defer func() {
+		kv.mu.Lock()
+		delete(kv.notifier, args.RequestID)
+		kv.mu.Unlock()
+	}()
+
+	log.Println("[Server] [Get] send Get")
+	go kv.sendOp(op, ch, notify_ch)
+
+	select {
+
+	case err := <-ch:
+		log.Println("Not leader")
+		reply.Err = Err(err)
+		return
+
+	case <-kv.notifier[args.RequestID].ch:
+		reply.Value = kv.notifier[args.RequestID].value
+		reply.Err = kv.notifier[args.RequestID].err
+		log.Println("receive notify for requestID", op.RequestID)
+		log.Println("[Server] [Get] return with err", reply.Err)
+		return
+	}
+
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	op := Op{
+		Type:      args.Op,
+		Key:       args.Key,
+		Value:     args.Value,
+		RequestID: args.RequestID,
+	}
+	ch := make(chan string)
+	notify_ch := make(chan struct{})
+	notify := &applyNotify{
+		ch: notify_ch,
+	}
+
+	kv.mu.Lock()
+	kv.notifier[args.RequestID] = notify
+	kv.mu.Unlock()
+
+	defer func() {
+		kv.mu.Lock()
+		delete(kv.notifier, args.RequestID)
+		kv.mu.Unlock()
+	}()
+
+	log.Println("[Server] [PutAppend] send Get")
+	go kv.sendOp(op, ch, notify_ch)
+
+	select {
+
+	case err := <-ch:
+		log.Println("Not leader")
+		reply.Err = Err(err)
+		return
+
+	case <-kv.notifier[args.RequestID].ch:
+		reply.Err = kv.notifier[args.RequestID].err
+		log.Println("receive notify for requestID", op.RequestID)
+		log.Println("[Server] [PutAppend] return with err", reply.Err)
+		return
+	}
+}
+
+func (kv *KVServer) applier() {
+	for command := range kv.applyCh {
+		log.Println("[applier] get command", command)
+		if command.CommandValid {
+			kv.mu.Lock()
+
+			op := command.Command.(Op)
+			log.Println("[applier] op is", op)
+
+			notify, ok := kv.notifier[op.RequestID]
+			if !ok || notify == nil || notify.done {
+				log.Println("alreay done")
+				kv.mu.Unlock()
+				continue
+			}
+
+			switch op.Type {
+			case "Get":
+				log.Println("[Server] [applier] get", op.Key, "as", kv.data[op.Key]+op.Value)
+				notify.value = kv.data[op.Key]
+			case "Put":
+				log.Println("[Server] [applier] put", op.Key, "to", kv.data[op.Key]+op.Value)
+				kv.data[op.Key] = op.Value
+			case "Append":
+				log.Println("[Server] [applier] update", op.Key, "to", kv.data[op.Key]+op.Value)
+				kv.data[op.Key] = kv.data[op.Key] + op.Value
+			}
+
+			log.Println("send notify for requestID", op.RequestID)
+			notify.done = true
+			close(notify.ch)
+
+			log.Println("[Server]", kv.me, " [applier] success apply", op.RequestID)
+
+			kv.mu.Unlock()
+		}
+
+		if command.SnapshotValid {
+			// TODO:
+		}
+	}
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -90,6 +243,10 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.chanel_buffer = 10000
+	kv.data = make(map[string]string)
+	kv.notifier = make(map[uint64](*applyNotify))
+	go kv.applier()
 
 	// You may need initialization code here.
 
