@@ -108,9 +108,9 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		reply.Err = Err(err)
 		return
 
-	case <-kv.notifier[args.RequestID].ch:
-		reply.Value = kv.notifier[args.RequestID].value
-		reply.Err = kv.notifier[args.RequestID].err
+	case <-notify.ch:
+		reply.Value = notify.value
+		reply.Err = notify.err
 		log.Println("receive notify for requestID", op.RequestID)
 		log.Println("[Server] [Get] return with err", reply.Err)
 		return
@@ -153,7 +153,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 
 	case <-notify.ch:
-		reply.Err = kv.notifier[args.RequestID].err
+		reply.Err = notify.err
 		log.Println("receive notify for requestID", op.RequestID)
 		log.Println("[Server] [PutAppend] return with err", reply.Err)
 		return
