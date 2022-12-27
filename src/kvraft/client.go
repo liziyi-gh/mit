@@ -32,6 +32,19 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	return ck
 }
 
+func (ck *Clerk) getRequestID() uint64 {
+	ck.request_id += 1
+	return ck.request_id
+}
+
+func (ck *Clerk) changeLeader() {
+	ck.leader = (ck.leader + 1) % len(ck.servers)
+}
+
+func (ck *Clerk) getLeader() int {
+	return ck.leader
+}
+
 // fetch the current value for a key.
 // returns "" if the key does not exist.
 // keeps trying forever in the face of all other errors.
@@ -76,19 +89,6 @@ func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
 	return ""
-}
-
-func (ck *Clerk) getRequestID() uint64 {
-	ck.request_id += 1
-	return ck.request_id
-}
-
-func (ck *Clerk) changeLeader() {
-	ck.leader = (ck.leader + 1) % len(ck.servers)
-}
-
-func (ck *Clerk) getLeader() int {
-	return ck.leader
 }
 
 // shared by Put and Append.
