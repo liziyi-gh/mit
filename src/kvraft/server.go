@@ -152,7 +152,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Err = Err(err)
 		return
 
-	case <-kv.notifier[args.RequestID].ch:
+	case <-notify.ch:
 		reply.Err = kv.notifier[args.RequestID].err
 		log.Println("receive notify for requestID", op.RequestID)
 		log.Println("[Server] [PutAppend] return with err", reply.Err)
