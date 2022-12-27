@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"bytes"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -48,10 +49,13 @@ type KVServer struct {
 
 	maxraftstate int // snapshot if log grows this big
 
+	persister *raft.Persister
+
 	// Your definitions here.
 	chanel_buffer int
 	data          map[string]string
 	notifier      map[uint64](*applyNotify)
+	applyed_index int
 }
 
 func (kv *KVServer) sendOp(op Op, ch chan string, notify_ch chan struct{}) {
@@ -186,6 +190,7 @@ func (kv *KVServer) applier() {
 
 			log.Println("send notify for requestID", op.RequestID)
 			notify.done = true
+			kv.applyed_index = command.CommandIndex
 			close(notify.ch)
 
 			log.Println("[Server]", kv.me, " [applier] success apply", op.RequestID)
@@ -194,7 +199,28 @@ func (kv *KVServer) applier() {
 		}
 
 		if command.SnapshotValid {
-			// TODO:
+			kv.mu.Lock()
+			r := bytes.NewBuffer(command.Snapshot)
+			d := labgob.NewDecoder(r)
+			m := make(map[string]string)
+			apply_index := 0
+			ok := d.Decode(&m) == nil && d.Decode(apply_index) == nil
+			if ok {
+				kv.data = m
+				kv.applyed_index = apply_index
+			}
+			kv.mu.Unlock()
+		}
+
+		if kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate {
+			kv.mu.Lock()
+			w := new(bytes.Buffer)
+			e := labgob.NewEncoder(w)
+			e.Encode(kv.data)
+			e.Encode(kv.applyed_index)
+			data := w.Bytes()
+			kv.rf.Snapshot(kv.applyed_index, data)
+			kv.mu.Unlock()
 		}
 	}
 }
@@ -246,6 +272,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.chanel_buffer = 10000
 	kv.data = make(map[string]string)
 	kv.notifier = make(map[uint64](*applyNotify))
+	kv.persister = persister
 	go kv.applier()
 
 	// You may need initialization code here.

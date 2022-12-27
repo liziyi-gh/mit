@@ -44,7 +44,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
 	ck.mu.Lock()
-	ck.mu.Unlock()
+	defer ck.mu.Unlock()
 	args := &GetArgs{
 		Key:       key,
 		RequestID: ck.getRequestID(),
@@ -72,7 +72,7 @@ func (ck *Clerk) Get(key string) string {
 		return ""
 
 	}
-	// panic("Get no leader")
+	log.Println("Get failed: can not find leader")
 
 	// You will have to modify this function.
 	return ""
@@ -129,10 +129,10 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			ck.changeLeader()
 			continue
 		}
-		log.Println("PutAppend Failed", reply.Err)
+		log.Println("PutAppend failed:", reply.Err)
 		return
 	}
-	// panic("PutAppend no leader")
+	log.Println("PutAppend failed: can not find leader")
 }
 
 func (ck *Clerk) Put(key string, value string) {
