@@ -102,12 +102,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.notifier[request_id] = notify
 	kv.mu.Unlock()
 
-	defer func() {
-		kv.mu.Lock()
-		delete(kv.notifier, request_id)
-		kv.mu.Unlock()
-	}()
-
 	log.Println("[Server] [Get] send Get")
 	go kv.sendOp(op, ch, notify_ch)
 
@@ -149,12 +143,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.notifier[request_id] = notify
 	kv.mu.Unlock()
 
-	defer func() {
-		kv.mu.Lock()
-		delete(kv.notifier, request_id)
-		kv.mu.Unlock()
-	}()
-
 	log.Println("[Server] [PutAppend] send Get")
 	go kv.sendOp(op, ch, notify_ch)
 
@@ -183,11 +171,20 @@ func (kv *KVServer) applier() {
 			log.Println("[applier] op is", op)
 
 			notify, ok := kv.notifier[op.RequestID]
-			// FIXME: not done in follower server
-			if !ok || notify == nil || notify.done {
+			if ok && notify.done {
 				log.Println("alreay done", kv.me)
 				kv.mu.Unlock()
 				continue
+			}
+
+			// NOTE: for follower
+			if !ok {
+				tmp_notify_ch := make(chan struct{})
+				tmp_notify := &applyNotify{
+					ch: tmp_notify_ch,
+				}
+				kv.notifier[op.RequestID] = tmp_notify
+				notify = tmp_notify
 			}
 
 			switch op.Type {
