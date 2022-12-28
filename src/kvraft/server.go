@@ -2,6 +2,7 @@ package kvraft
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -21,14 +22,23 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
+func DPrintln(a ...interface{}) (n int, err error) {
+	if Debug {
+		fmt.Println(a...)
+	}
+	return
+}
+
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Type      string
-	Key       string
-	Value     string
-	RequestID uint64
+	Type       string
+	Key        string
+	Value      string
+	Request_id uint64
+	Client_id  uint32
+	Trans_id   uint32
 }
 
 type applyNotify struct {
@@ -38,6 +48,12 @@ type applyNotify struct {
 	value   string
 	err     Err
 	done    bool
+}
+
+type raftLog struct {
+	op        *Op
+	ch        chan string
+	notify_ch chan struct{}
 }
 
 type KVServer struct {
@@ -56,19 +72,47 @@ type KVServer struct {
 	data          map[string]string
 	notifier      map[uint64](*applyNotify)
 	applyed_index int
-	request_id    uint64
+	trans_id      map[uint32](map[uint32]uint64)
+	raft_chan     chan raftLog
 }
 
-func (kv *KVServer) getRequestId() uint64 {
-	kv.request_id += 1
-	return kv.request_id
+func (kv *KVServer) getRequestId(client_id uint32, trans_id uint32) uint64 {
+	return uint64(client_id)<<32 + uint64(trans_id)
 }
 
-func (kv *KVServer) sendOp(op Op, ch chan string, notify_ch chan struct{}) {
+func (kv *KVServer) checkTransID(client_id uint32, trans_id uint32) bool {
+	cmap, ok := kv.trans_id[client_id]
+	if !ok {
+		return false
+	}
+
+	_, ok = cmap[trans_id]
+	if !ok {
+		return false
+	}
+
+	return true
+}
+
+func (kv *KVServer) setTransID(client_id uint32, trans_id uint32, request_id uint64) {
+	cmap, ok := kv.trans_id[client_id]
+	if !ok {
+		kv.trans_id[client_id] = make(map[uint32]uint64)
+		cmap = kv.trans_id[client_id]
+	}
+	cmap[trans_id] = request_id
+	DPrintln("Server", kv.me, "allocate requestId", request_id, "for client", client_id, "trans id", trans_id)
+}
+
+func (kv *KVServer) sendRaftLog(raftlog raftLog) {
+	op := raftlog.op
+	ch := raftlog.ch
+	notify_ch := raftlog.notify_ch
+
 	retry_ms := 1000
 	retry_times := 10
 	for i := 0; i < retry_times; i++ {
-		_, _, is_leader := kv.rf.Start(op)
+		_, _, is_leader := kv.rf.Start(*op)
 		if !is_leader {
 			ch <- NOTLEADER
 		}
@@ -82,41 +126,78 @@ func (kv *KVServer) sendOp(op Op, ch chan string, notify_ch chan struct{}) {
 	ch <- INTERNAL_ERROR
 }
 
-func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
-	kv.mu.Lock()
-	request_id := kv.getRequestId()
-	kv.mu.Unlock()
-	op := Op{
-		Type:      "Get",
-		Key:       args.Key,
-		RequestID: request_id,
+func (kv *KVServer) sendToRaft() {
+	for raftlog := range kv.raft_chan {
+		if kv.killed() {
+			return
+		}
+		kv.sendRaftLog(raftlog)
 	}
+}
+
+func (kv *KVServer) sendOneOp(request_id uint64, op *Op) (chan string, *applyNotify) {
 	ch := make(chan string)
 	notify_ch := make(chan struct{})
 	notify := &applyNotify{
 		ch: notify_ch,
 	}
 
-	kv.mu.Lock()
 	kv.notifier[request_id] = notify
-	kv.mu.Unlock()
 
-	log.Println("[Server] [Get] send Get")
-	go kv.sendOp(op, ch, notify_ch)
+	raftlog := raftLog{
+		op:        op,
+		ch:        ch,
+		notify_ch: notify_ch,
+	}
+	DPrintln("[Server] [sendOneOp] trying")
+	kv.raft_chan <- raftlog
+	DPrintln("[Server] [sendOneOp] sent")
+
+	return ch, notify
+}
+
+func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// Your code here.
+	reply.Receive = true
+
+	kv.mu.Lock()
+	duplicate := kv.checkTransID(args.Client_id, args.Trans_id)
+	if duplicate {
+		tmp, ok := kv.trans_id[args.Client_id][args.Trans_id]
+		if ok {
+			reply.Value = kv.notifier[tmp].value
+		} else {
+			reply.Err = Err("cache can not find")
+		}
+		kv.mu.Unlock()
+		DPrintln("duplicate Get RPC")
+		return
+	}
+	request_id := kv.getRequestId(args.Client_id, args.Trans_id)
+	kv.setTransID(args.Client_id, args.Trans_id, request_id)
+
+	op := Op{
+		Type:       "Get",
+		Key:        args.Key,
+		Client_id:  args.Client_id,
+		Trans_id:   args.Trans_id,
+		Request_id: request_id,
+	}
+	ch, notify := kv.sendOneOp(request_id, &op)
+	kv.mu.Unlock()
 
 	select {
 
 	case err := <-ch:
-		log.Println("[Server] [Get] Not leader")
+		DPrintln("[Server] [Get] Not leader")
 		reply.Err = Err(err)
 		return
 
 	case <-notify.ch:
 		reply.Value = notify.value
 		reply.Err = notify.err
-		log.Println("receive notify for requestID", op.RequestID)
-		log.Println("[Server] [Get] return with err", reply.Err)
+		DPrintln("receive notify for requestID", op.Request_id)
+		DPrintln("[Server] [Get] lzy: return value is", reply.Value)
 		return
 	}
 
@@ -124,106 +205,126 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	reply.Receive = true
+
 	kv.mu.Lock()
-	request_id := kv.getRequestId()
-	kv.mu.Unlock()
+	duplicate := kv.checkTransID(args.Client_id, args.Trans_id)
+	if duplicate {
+		kv.mu.Unlock()
+		DPrintln("duplicate PutAppend RPC client id is", args.Client_id, "trans id is", args.Trans_id)
+		return
+	}
+
+	request_id := kv.getRequestId(args.Client_id, args.Trans_id)
+	kv.setTransID(args.Client_id, args.Trans_id, request_id)
+
 	op := Op{
-		Type:      args.Op,
-		Key:       args.Key,
-		Value:     args.Value,
-		RequestID: request_id,
-	}
-	ch := make(chan string)
-	notify_ch := make(chan struct{})
-	notify := &applyNotify{
-		ch: notify_ch,
+		Type:       args.Op,
+		Key:        args.Key,
+		Value:      args.Value,
+		Client_id:  args.Client_id,
+		Trans_id:   args.Trans_id,
+		Request_id: request_id,
 	}
 
-	kv.mu.Lock()
-	kv.notifier[request_id] = notify
+	ch, notify := kv.sendOneOp(request_id, &op)
+
 	kv.mu.Unlock()
-
-	log.Println("[Server] [PutAppend] send Get")
-	go kv.sendOp(op, ch, notify_ch)
 
 	select {
 
 	case err := <-ch:
-		log.Println("[Server] [PutAppend] Not leader")
+		DPrintln("[Server] [PutAppend] Not leader")
 		reply.Err = Err(err)
 		return
 
 	case <-notify.ch:
 		reply.Err = notify.err
-		log.Println("receive notify for requestID", op.RequestID)
-		log.Println("[Server] [PutAppend] return with err", reply.Err)
+		DPrintln("receive notify for requestID", op.Request_id)
+		DPrintln("[Server] [PutAppend] return with err", reply.Err)
 		return
 	}
 }
 
+func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
+	kv.mu.Lock()
+
+	op := command.Command.(Op)
+	DPrintln("[applier] op is", op)
+
+	notify, ok := kv.notifier[op.Request_id]
+	if ok && notify.done {
+		DPrintln("Server ", kv.me, "alreay done", op.Request_id)
+		kv.mu.Unlock()
+		return
+	}
+
+	if !ok {
+		tmp_notify_ch := make(chan struct{})
+		tmp_notify := &applyNotify{
+			ch: tmp_notify_ch,
+		}
+		kv.notifier[op.Request_id] = tmp_notify
+		notify = tmp_notify
+	}
+
+	switch op.Type {
+	case "Get":
+		DPrintln("[Server]", kv.me, " [applier] get", op.Key, "as", kv.data[op.Key])
+		notify.value = kv.data[op.Key]
+	case "Put":
+		DPrintln("[Server]", kv.me, " [applier] set", op.Key, "to", op.Value)
+		kv.data[op.Key] = op.Value
+	case "Append":
+		origin_value, ok := kv.data[op.Key]
+		if !ok {
+			DPrintln("[Server]", kv.me, " [applier] update", op.Key, "to", op.Value)
+			kv.data[op.Key] = op.Value
+		} else {
+			DPrintln("[Server]", kv.me, " [applier] update", op.Key, "to", origin_value+op.Value)
+			kv.data[op.Key] = origin_value + op.Value
+		}
+	}
+
+	notify.done = true
+	kv.applyed_index = command.CommandIndex
+	kv.setTransID(op.Client_id, op.Trans_id, op.Request_id)
+	close(notify.ch)
+
+	DPrintln("[Server]", kv.me, " [applier] success apply", op.Request_id, "raft index", command.CommandIndex)
+
+	kv.mu.Unlock()
+}
+
+func (kv *KVServer) applySnapshot(command raft.ApplyMsg) {
+	kv.mu.Lock()
+	r := bytes.NewBuffer(command.Snapshot)
+	d := labgob.NewDecoder(r)
+	m := make(map[string]string)
+	apply_index := 0
+	// request_id := 0
+	// FIXME: is request_id need to save?
+	ok := d.Decode(&m) == nil && d.Decode(apply_index) == nil // && d.Decode(&request_id) == nil
+	if ok {
+		kv.data = m
+		kv.applyed_index = apply_index
+		// kv.request_id = uint64(request_id)
+	}
+	kv.mu.Unlock()
+}
+
 func (kv *KVServer) applier() {
 	for command := range kv.applyCh {
-		log.Println("[applier] get command", command)
+		if kv.killed() {
+			return
+		}
+		DPrintln("[applier] get command", command)
 		if command.CommandValid {
-			kv.mu.Lock()
-
-			op := command.Command.(Op)
-			log.Println("[applier] op is", op)
-
-			notify, ok := kv.notifier[op.RequestID]
-			if ok && notify.done {
-				log.Println("Server ", kv.me, "alreay done", op.RequestID)
-				kv.mu.Unlock()
-				continue
-			}
-
-			// NOTE: for follower
-			if !ok {
-				tmp_notify_ch := make(chan struct{})
-				tmp_notify := &applyNotify{
-					ch: tmp_notify_ch,
-				}
-				kv.notifier[op.RequestID] = tmp_notify
-				notify = tmp_notify
-			}
-
-			switch op.Type {
-			case "Get":
-				log.Println("[Server]", kv.me, " [applier] get", op.Key, "as", kv.data[op.Key]+op.Value)
-				notify.value = kv.data[op.Key]
-			case "Put":
-				log.Println("[Server]", kv.me, " [applier] put", op.Key, "to", kv.data[op.Key]+op.Value)
-				kv.data[op.Key] = op.Value
-			case "Append":
-				log.Println("[Server]", kv.me, " [applier] update", op.Key, "to", kv.data[op.Key]+op.Value)
-				kv.data[op.Key] = kv.data[op.Key] + op.Value
-			}
-
-			log.Println("send notify for requestID", op.RequestID)
-			notify.done = true
-			kv.applyed_index = command.CommandIndex
-			close(notify.ch)
-
-			log.Println("[Server]", kv.me, " [applier] success apply", op.RequestID)
-
-			kv.mu.Unlock()
+			kv.applyCommand(command)
 		}
 
 		if command.SnapshotValid {
-			kv.mu.Lock()
-			r := bytes.NewBuffer(command.Snapshot)
-			d := labgob.NewDecoder(r)
-			m := make(map[string]string)
-			apply_index := 0
-			// request_id := 0
-			// FIXME: is request_id need to save?
-			ok := d.Decode(&m) == nil && d.Decode(apply_index) == nil // && d.Decode(&request_id) == nil
-			if ok {
-				kv.data = m
-				kv.applyed_index = apply_index
-				// kv.request_id = uint64(request_id)
-			}
-			kv.mu.Unlock()
+			kv.applySnapshot(command)
 		}
 
 		if kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate {
@@ -287,7 +388,10 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.data = make(map[string]string)
 	kv.notifier = make(map[uint64](*applyNotify))
 	kv.persister = persister
+	kv.trans_id = make(map[uint32](map[uint32]uint64))
+	kv.raft_chan = make(chan raftLog, kv.chanel_buffer)
 	go kv.applier()
+	go kv.sendToRaft()
 
 	// You may need initialization code here.
 

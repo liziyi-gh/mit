@@ -16,20 +16,28 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Client_id uint32
+	Trans_id  uint32
 }
 
 type PutAppendReply struct {
-	Err Err
+	Err     Err
+	Receive bool
+	Leader  int
 }
 
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
+	Client_id uint32
+	Trans_id  uint32
 }
 
 type GetReply struct {
-	Err   Err
-	Value string
+	Err     Err
+	Value   string
+	Receive bool
+	Leader  int
 }
 
 const NOTLEADER = "Not leader"

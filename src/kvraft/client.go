@@ -2,7 +2,6 @@ package kvraft
 
 import (
 	"crypto/rand"
-	"log"
 	"math/big"
 	"sync"
 	"time"
@@ -10,12 +9,16 @@ import (
 	"6.824/labrpc"
 )
 
+var used_me_number_lock sync.Mutex
+var used_me_number map[uint32](bool) = make(map[uint32](bool))
+
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
-	mu         sync.Mutex
-	leader     int
-	request_id uint64
+	mu       sync.Mutex
+	leader   int
+	trans_id uint32
+	me       uint32
 }
 
 func nrand() int64 {
@@ -29,15 +32,33 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+	used_me_number_lock.Lock()
+	for {
+		i := uint32(nrand())
+		_, ok := used_me_number[i]
+		if !ok {
+			used_me_number[i] = true
+			ck.me = i
+			break
+		}
+	}
+	used_me_number_lock.Unlock()
+	DPrintln("Make clerk")
 	return ck
 }
 
+// FIXME: reply should contain leader id
 func (ck *Clerk) changeLeader() {
 	ck.leader = (ck.leader + 1) % len(ck.servers)
 }
 
 func (ck *Clerk) getLeader() int {
 	return ck.leader
+}
+
+func (ck *Clerk) getTransId() uint32 {
+	ck.trans_id += 1
+	return ck.trans_id
 }
 
 // fetch the current value for a key.
@@ -54,10 +75,12 @@ func (ck *Clerk) Get(key string) string {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
 	args := &GetArgs{
-		Key: key,
+		Key:       key,
+		Client_id: ck.me,
+		Trans_id:  ck.getTransId(),
 	}
 	for i := 0; i < 20; i++ {
-		log.Println("trying Get")
+		DPrintln("trying Get")
 		reply := &GetReply{}
 		ok := ck.servers[ck.leader].Call("KVServer.Get", args, reply)
 		if !ok {
@@ -76,15 +99,16 @@ func (ck *Clerk) Get(key string) string {
 		}
 
 		if reply.Err == INTERNAL_ERROR {
+			panic(INTERNAL_ERROR)
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 
-		log.Println("Get failed: ", reply.Err)
+		DPrintln("Get failed: ", reply.Err)
 		return ""
 
 	}
-	log.Println("Get failed")
+	DPrintln("Get failed")
 	panic("Get failed")
 
 	// You will have to modify this function.
@@ -104,9 +128,11 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
 	args := &PutAppendArgs{
-		Op:    op,
-		Key:   key,
-		Value: value,
+		Op:        op,
+		Key:       key,
+		Value:     value,
+		Client_id: ck.me,
+		Trans_id:  ck.getTransId(),
 	}
 	for i := 0; i < 20; i++ {
 		reply := &PutAppendReply{}
@@ -115,28 +141,29 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			ck.changeLeader()
 			continue
 		}
-		log.Println("[Client] PutAppend err is", reply.Err)
+		DPrintln("[Client] PutAppend err is", reply.Err)
 		if reply.Err == "" {
-			log.Println("PutAppend success")
+			DPrintln("PutAppend success")
 			return
 		}
 
 		if reply.Err == NOTLEADER {
-			log.Println("PutAppend not leader")
+			DPrintln("PutAppend not leader")
 			time.Sleep(200 * time.Millisecond)
 			ck.changeLeader()
 			continue
 		}
 
 		if reply.Err == INTERNAL_ERROR {
+			panic(INTERNAL_ERROR)
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 
-		log.Println("PutAppend failed:", reply.Err)
+		DPrintln("PutAppend failed:", reply.Err)
 		return
 	}
-	log.Println("PutAppend failed")
+	DPrintln("PutAppend failed")
 	panic("PutAppend failed")
 }
 
