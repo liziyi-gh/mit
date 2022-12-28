@@ -172,7 +172,7 @@ func (kv *KVServer) applier() {
 
 			notify, ok := kv.notifier[op.RequestID]
 			if ok && notify.done {
-				log.Println("alreay done", kv.me)
+				log.Println("Server ", kv.me, "alreay done", op.RequestID)
 				kv.mu.Unlock()
 				continue
 			}
@@ -189,13 +189,13 @@ func (kv *KVServer) applier() {
 
 			switch op.Type {
 			case "Get":
-				log.Println("[Server] [applier] get", op.Key, "as", kv.data[op.Key]+op.Value)
+				log.Println("[Server]", kv.me, " [applier] get", op.Key, "as", kv.data[op.Key]+op.Value)
 				notify.value = kv.data[op.Key]
 			case "Put":
-				log.Println("[Server] [applier] put", op.Key, "to", kv.data[op.Key]+op.Value)
+				log.Println("[Server]", kv.me, " [applier] put", op.Key, "to", kv.data[op.Key]+op.Value)
 				kv.data[op.Key] = op.Value
 			case "Append":
-				log.Println("[Server] [applier] update", op.Key, "to", kv.data[op.Key]+op.Value)
+				log.Println("[Server]", kv.me, " [applier] update", op.Key, "to", kv.data[op.Key]+op.Value)
 				kv.data[op.Key] = kv.data[op.Key] + op.Value
 			}
 
