@@ -1360,7 +1360,6 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 				new_prev_log_position = -1
 				log.Println("leader log is", rf.log)
 				log.Println("args.PREV_LOG_INDEX is", args.PREV_LOG_INDEX)
-				log.Println("liziyi")
 				goto start_append_logs
 			}
 		} else {
@@ -1377,7 +1376,6 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		if ok {
 			tmp, ok2 := rf.GetPositionByIndex(last_index_of_prev_term)
 			if ok2 {
-				log.Println("liziyi ok2")
 				new_prev_log_position = tmp
 				goto start_append_logs
 			}
@@ -1390,13 +1388,11 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		if ok {
 			tmp, ok3 := rf.GetPositionByIndex(last_index_before_term)
 			if ok3 {
-				log.Println("liziyi ok3")
 				new_prev_log_position = tmp
 				goto start_append_logs
 			}
 		} else {
 			if new_prev_log_position >= 0 {
-				log.Println("liziyi ok4")
 				new_prev_log_position = 0
 				goto start_append_logs
 			}
