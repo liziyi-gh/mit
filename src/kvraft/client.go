@@ -32,11 +32,6 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	return ck
 }
 
-func (ck *Clerk) getRequestID() uint64 {
-	ck.request_id += 1
-	return ck.request_id
-}
-
 func (ck *Clerk) changeLeader() {
 	ck.leader = (ck.leader + 1) % len(ck.servers)
 }
@@ -59,8 +54,7 @@ func (ck *Clerk) Get(key string) string {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
 	args := &GetArgs{
-		Key:       key,
-		RequestID: ck.getRequestID(),
+		Key: key,
 	}
 	for i := 0; i < 20; i++ {
 		log.Println("trying Get")
@@ -75,17 +69,23 @@ func (ck *Clerk) Get(key string) string {
 			return reply.Value
 		}
 
-		if reply.Err == "Not leader" {
+		if reply.Err == NOTLEADER {
 			time.Sleep(200 * time.Millisecond)
 			ck.changeLeader()
 			continue
 		}
 
-		log.Println("return Get")
+		if reply.Err == INTERNAL_ERROR {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+
+		log.Println("Get failed: ", reply.Err)
 		return ""
 
 	}
-	log.Println("Get failed: can not find leader")
+	log.Println("Get failed")
+	panic("Get failed")
 
 	// You will have to modify this function.
 	return ""
@@ -103,15 +103,12 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
-	log.Println("PutAppend value is", value)
 	args := &PutAppendArgs{
-		Op:        op,
-		Key:       key,
-		Value:     value,
-		RequestID: ck.getRequestID(),
+		Op:    op,
+		Key:   key,
+		Value: value,
 	}
 	for i := 0; i < 20; i++ {
-		log.Println("trying PutAppend", args.RequestID, "to server", ck.getLeader())
 		reply := &PutAppendReply{}
 		ok := ck.servers[ck.getLeader()].Call("KVServer.PutAppend", args, reply)
 		if !ok {
@@ -123,16 +120,24 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			log.Println("PutAppend success")
 			return
 		}
-		if reply.Err == "Not leader" {
+
+		if reply.Err == NOTLEADER {
 			log.Println("PutAppend not leader")
 			time.Sleep(200 * time.Millisecond)
 			ck.changeLeader()
 			continue
 		}
+
+		if reply.Err == INTERNAL_ERROR {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+
 		log.Println("PutAppend failed:", reply.Err)
 		return
 	}
-	log.Println("PutAppend failed: can not find leader")
+	log.Println("PutAppend failed")
+	panic("PutAppend failed")
 }
 
 func (ck *Clerk) Put(key string, value string) {

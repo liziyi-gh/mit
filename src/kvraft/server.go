@@ -56,6 +56,12 @@ type KVServer struct {
 	data          map[string]string
 	notifier      map[uint64](*applyNotify)
 	applyed_index int
+	request_id    uint64
+}
+
+func (kv *KVServer) getRequestId() uint64 {
+	kv.request_id += 1
+	return kv.request_id
 }
 
 func (kv *KVServer) sendOp(op Op, ch chan string, notify_ch chan struct{}) {
@@ -64,7 +70,7 @@ func (kv *KVServer) sendOp(op Op, ch chan string, notify_ch chan struct{}) {
 	for i := 0; i < retry_times; i++ {
 		_, _, is_leader := kv.rf.Start(op)
 		if !is_leader {
-			ch <- "Not leader"
+			ch <- NOTLEADER
 		}
 		select {
 		case <-time.After(time.Duration(retry_ms) * time.Millisecond):
@@ -73,14 +79,18 @@ func (kv *KVServer) sendOp(op Op, ch chan string, notify_ch chan struct{}) {
 			return
 		}
 	}
+	ch <- INTERNAL_ERROR
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	kv.mu.Lock()
+	request_id := kv.getRequestId()
+	kv.mu.Unlock()
 	op := Op{
 		Type:      "Get",
 		Key:       args.Key,
-		RequestID: args.RequestID,
+		RequestID: request_id,
 	}
 	ch := make(chan string)
 	notify_ch := make(chan struct{})
@@ -89,12 +99,12 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 
 	kv.mu.Lock()
-	kv.notifier[args.RequestID] = notify
+	kv.notifier[request_id] = notify
 	kv.mu.Unlock()
 
 	defer func() {
 		kv.mu.Lock()
-		delete(kv.notifier, args.RequestID)
+		delete(kv.notifier, request_id)
 		kv.mu.Unlock()
 	}()
 
@@ -104,7 +114,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	select {
 
 	case err := <-ch:
-		log.Println("Not leader")
+		log.Println("[Server] [Get] Not leader")
 		reply.Err = Err(err)
 		return
 
@@ -120,11 +130,14 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	kv.mu.Lock()
+	request_id := kv.getRequestId()
+	kv.mu.Unlock()
 	op := Op{
 		Type:      args.Op,
 		Key:       args.Key,
 		Value:     args.Value,
-		RequestID: args.RequestID,
+		RequestID: request_id,
 	}
 	ch := make(chan string)
 	notify_ch := make(chan struct{})
@@ -133,12 +146,12 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 
 	kv.mu.Lock()
-	kv.notifier[args.RequestID] = notify
+	kv.notifier[request_id] = notify
 	kv.mu.Unlock()
 
 	defer func() {
 		kv.mu.Lock()
-		delete(kv.notifier, args.RequestID)
+		delete(kv.notifier, request_id)
 		kv.mu.Unlock()
 	}()
 
@@ -148,7 +161,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	select {
 
 	case err := <-ch:
-		log.Println("Not leader")
+		log.Println("[Server] [PutAppend] Not leader")
 		reply.Err = Err(err)
 		return
 
@@ -170,8 +183,9 @@ func (kv *KVServer) applier() {
 			log.Println("[applier] op is", op)
 
 			notify, ok := kv.notifier[op.RequestID]
+			// FIXME: not done in follower server
 			if !ok || notify == nil || notify.done {
-				log.Println("alreay done")
+				log.Println("alreay done", kv.me)
 				kv.mu.Unlock()
 				continue
 			}
@@ -204,10 +218,13 @@ func (kv *KVServer) applier() {
 			d := labgob.NewDecoder(r)
 			m := make(map[string]string)
 			apply_index := 0
-			ok := d.Decode(&m) == nil && d.Decode(apply_index) == nil
+			// request_id := 0
+			// FIXME: is request_id need to save?
+			ok := d.Decode(&m) == nil && d.Decode(apply_index) == nil // && d.Decode(&request_id) == nil
 			if ok {
 				kv.data = m
 				kv.applyed_index = apply_index
+				// kv.request_id = uint64(request_id)
 			}
 			kv.mu.Unlock()
 		}

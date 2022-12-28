@@ -16,7 +16,6 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	RequestID uint64
 }
 
 type PutAppendReply struct {
@@ -26,10 +25,12 @@ type PutAppendReply struct {
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
-	RequestID uint64
 }
 
 type GetReply struct {
 	Err   Err
 	Value string
 }
+
+const NOTLEADER = "Not leader"
+const INTERNAL_ERROR = "[Server] Internal error"
