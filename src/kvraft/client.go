@@ -80,7 +80,7 @@ func (ck *Clerk) Get(key string) string {
 		Trans_id:  ck.getTransId(),
 	}
 	for i := 0; i < 20; i++ {
-		DPrintln("trying Get", "client", ck.me, "trans id", args.Trans_id)
+		DPrintln("[Client] trying Get", "client", ck.me, "trans id", args.Trans_id)
 		reply := &GetReply{}
 		ok := ck.servers[ck.leader].Call("KVServer.Get", args, reply)
 		if !ok {
@@ -104,15 +104,14 @@ func (ck *Clerk) Get(key string) string {
 			continue
 		}
 
-		DPrintln("Get failed: ", reply.Err)
-		return ""
-
+		DPrintln("Get error: ", reply.Err)
+		return "nil: Get error"
 	}
-	DPrintln("Get failed")
-	panic("Get failed")
+	DPrintln("Get error")
+	panic("Get error")
 
 	// You will have to modify this function.
-	return ""
+	return "nil: Get error"
 }
 
 // shared by Put and Append.
@@ -135,7 +134,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		Trans_id:  ck.getTransId(),
 	}
 	for i := 0; i < 20; i++ {
-		DPrintln("trying Get", "client", ck.me, "trans id", args.Trans_id)
+		DPrintln("[Client] trying Get", "client", ck.me, "trans id", args.Trans_id)
 		reply := &PutAppendReply{}
 		ok := ck.servers[ck.getLeader()].Call("KVServer.PutAppend", args, reply)
 		if !ok {
@@ -161,11 +160,11 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			continue
 		}
 
-		DPrintln("PutAppend failed:", reply.Err)
+		DPrintln("PutAppend error:", reply.Err)
 		return
 	}
-	DPrintln("PutAppend failed")
-	panic("PutAppend failed")
+	DPrintln("PutAppend error")
+	// panic("PutAppend error")
 }
 
 func (ck *Clerk) Put(key string, value string) {
