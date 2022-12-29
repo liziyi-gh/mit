@@ -80,7 +80,7 @@ func (ck *Clerk) Get(key string) string {
 		Trans_id:  ck.getTransId(),
 	}
 	for i := 0; i < 20; i++ {
-		DPrintln("trying Get")
+		DPrintln("trying Get", "client", ck.me, "trans id", args.Trans_id)
 		reply := &GetReply{}
 		ok := ck.servers[ck.leader].Call("KVServer.Get", args, reply)
 		if !ok {
@@ -135,6 +135,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		Trans_id:  ck.getTransId(),
 	}
 	for i := 0; i < 20; i++ {
+		DPrintln("trying Get", "client", ck.me, "trans id", args.Trans_id)
 		reply := &PutAppendReply{}
 		ok := ck.servers[ck.getLeader()].Call("KVServer.PutAppend", args, reply)
 		if !ok {

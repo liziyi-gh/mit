@@ -91,6 +91,15 @@ func (kv *KVServer) checkTransID(client_id uint32, trans_id uint32) bool {
 		return false
 	}
 
+	_, ok = kv.notifier[cmap[trans_id]]
+	if !ok {
+		return false
+	}
+
+	if !kv.notifier[cmap[trans_id]].done {
+		return false
+	}
+
 	return true
 }
 
@@ -99,6 +108,13 @@ func (kv *KVServer) setTransID(client_id uint32, trans_id uint32, request_id uin
 	if !ok {
 		kv.trans_id[client_id] = make(map[uint32]uint64)
 		cmap = kv.trans_id[client_id]
+	}
+	_, ok = cmap[trans_id]
+	if ok {
+		if cmap[trans_id] != request_id {
+			panic("request_id error")
+		}
+		return
 	}
 	cmap[trans_id] = request_id
 	DPrintln("Server", kv.me, "allocate requestId", request_id, "for client", client_id, "trans id", trans_id)
@@ -112,17 +128,21 @@ func (kv *KVServer) sendRaftLog(raftlog raftLog) {
 	retry_ms := 1000
 	retry_times := 10
 	for i := 0; i < retry_times; i++ {
+		DPrintln("Server", kv.me, "trying Start client id", op.Client_id, "trans id", op.Trans_id, "request id", op.Request_id)
 		_, _, is_leader := kv.rf.Start(*op)
 		if !is_leader {
 			ch <- NOTLEADER
+			return
 		}
 		select {
 		case <-time.After(time.Duration(retry_ms) * time.Millisecond):
+			DPrintln("sendRaftLog timeout, request_id", op.Request_id)
 			continue
 		case <-notify_ch:
 			return
 		}
 	}
+	DPrintln("sendRaftLog internal error, request_id", op.Request_id)
 	ch <- INTERNAL_ERROR
 }
 
@@ -131,6 +151,7 @@ func (kv *KVServer) sendToRaft() {
 		if kv.killed() {
 			return
 		}
+		DPrintln("sendToRaft new raftlog")
 		kv.sendRaftLog(raftlog)
 	}
 }
@@ -149,9 +170,9 @@ func (kv *KVServer) sendOneOp(request_id uint64, op *Op) (chan string, *applyNot
 		ch:        ch,
 		notify_ch: notify_ch,
 	}
-	DPrintln("[Server] [sendOneOp] trying")
+	DPrintln("[Server] [sendOneOp] trying ", request_id, "in server", kv.me)
 	kv.raft_chan <- raftlog
-	DPrintln("[Server] [sendOneOp] sent")
+	DPrintln("[Server] [sendOneOp] sent ", request_id, "in server", kv.me)
 
 	return ch, notify
 }
