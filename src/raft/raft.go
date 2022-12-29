@@ -285,6 +285,12 @@ func (rf *Raft) RemoveLogIndexGreaterThan(last_log_index int) bool {
 		}
 	}
 	rf.log = rf.log[:reserve_logs_number]
+
+	if last_log_index < rf.last_log_index_in_snapshot {
+		rf.last_log_index_in_snapshot = 0
+		rf.last_log_term_in_snapshot = 0
+		rf.snapshot_data = nil
+	}
 	rf.persist()
 	return true
 }
