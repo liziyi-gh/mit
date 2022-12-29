@@ -791,8 +791,6 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 	}
 
 	// prev log dismatched
-	// FIXME: what if server used to be leader at previous term,
-	// and save some un commit log with snapshot?
 	if !matched {
 		if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
 			rf.RemoveLogIndexGreaterThan(0)
