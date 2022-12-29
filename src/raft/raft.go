@@ -717,7 +717,7 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 
 	reply.TERM = rf.current_term
 	if rf.current_term > args.TERM {
-		log.Println("Reject install snapshot from old leader")
+		log.Printf("Server[%d] Reject install snapshot from old leader", rf.me)
 		return
 	}
 	if args.LAST_INCLUDED_INDEX == rf.last_log_index_in_snapshot &&
