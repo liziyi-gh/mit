@@ -638,9 +638,10 @@ func (rf *Raft) sendCommandToApplierFunction() {
 			rf.commit_index = new_command.CommandIndex
 			rf.mu.Unlock()
 			rf.apply_ch <- new_command
+			log.Printf("Server[%d] committed index %d", rf.me, new_command.CommandIndex)
 			continue
 		}
-		// FIXME: should judge snapshot index?
+
 		if new_command.SnapshotValid {
 			rf.commit_index = new_command.SnapshotIndex
 			rf.mu.Unlock()
