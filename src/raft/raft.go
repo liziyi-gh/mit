@@ -1498,7 +1498,7 @@ release_lock_and_return:
 }
 
 func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
-	// FIXME: why sometimes this function run args nearly same time?
+	// TODO: sometimes this function run args nearly same time?
 	// just because schedule?
 	defer func() { ch <- struct{}{} }()
 	rf.mu.Lock()
