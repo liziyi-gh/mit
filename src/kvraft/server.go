@@ -210,7 +210,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	select {
 
 	case err := <-ch:
-		DPrintln("[Server] [Get] Not leader")
+		DPrintln("[Server] [Get] error", err)
 		reply.Err = Err(err)
 		return
 
@@ -255,7 +255,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	select {
 
 	case err := <-ch:
-		DPrintln("[Server] [PutAppend] Not leader")
+		DPrintln("[Server] [PutAppend] error", err)
 		reply.Err = Err(err)
 		return
 
