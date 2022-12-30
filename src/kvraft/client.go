@@ -12,6 +12,9 @@ import (
 var used_me_number_lock sync.Mutex
 var used_me_number map[uint32](bool) = make(map[uint32](bool))
 
+const RPC_RETRY_TIMES = 100
+const RPC_WAIT_TIME_MS = 200
+
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
@@ -79,7 +82,8 @@ func (ck *Clerk) Get(key string) string {
 		Client_id: ck.me,
 		Trans_id:  ck.getTransId(),
 	}
-	for i := 0; i < 20; i++ {
+	not_leader_time := 0
+	for i := 0; i < RPC_RETRY_TIMES; i++ {
 		DPrintln("[Client] trying Get", "client", ck.me, "trans id", args.Trans_id)
 		reply := &GetReply{}
 		ok := ck.servers[ck.leader].Call("KVServer.Get", args, reply)
@@ -93,22 +97,23 @@ func (ck *Clerk) Get(key string) string {
 		}
 
 		if reply.Err == NOTLEADER {
-			time.Sleep(200 * time.Millisecond)
+			not_leader_time += 1
+			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
 			ck.changeLeader()
 			continue
 		}
 
 		if reply.Err == INTERNAL_ERROR {
 			panic(INTERNAL_ERROR)
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
 			continue
 		}
 
 		DPrintln("Get error: ", reply.Err)
 		return "nil: Get error"
 	}
-	DPrintln("Get error")
-	panic("Get error")
+	DPrintln("Get error, not leader time is", not_leader_time)
+	// panic("Get error")
 
 	// You will have to modify this function.
 	return "nil: Get error"
@@ -133,7 +138,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		Client_id: ck.me,
 		Trans_id:  ck.getTransId(),
 	}
-	for i := 0; i < 20; i++ {
+	not_leader_times := 0
+	for i := 0; i < RPC_RETRY_TIMES; i++ {
 		DPrintln("[Client] trying Get", "client", ck.me, "trans id", args.Trans_id)
 		reply := &PutAppendReply{}
 		ok := ck.servers[ck.getLeader()].Call("KVServer.PutAppend", args, reply)
@@ -148,22 +154,23 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		}
 
 		if reply.Err == NOTLEADER {
+			not_leader_times += 1
 			DPrintln("PutAppend not leader")
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
 			ck.changeLeader()
 			continue
 		}
 
 		if reply.Err == INTERNAL_ERROR {
 			panic(INTERNAL_ERROR)
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
 			continue
 		}
 
 		DPrintln("PutAppend error:", reply.Err)
 		return
 	}
-	DPrintln("PutAppend error")
+	DPrintln("PutAppend error, not leader times is", not_leader_times)
 	// panic("PutAppend error")
 }
 
