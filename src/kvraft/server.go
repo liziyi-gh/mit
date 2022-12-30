@@ -79,7 +79,7 @@ func (kv *KVServer) calculateRequestId(client_id uint32, trans_id uint32) uint64
 	return uint64(client_id)<<32 + uint64(trans_id)
 }
 
-func (kv *KVServer) checkTransID(client_id uint32, trans_id uint32) bool {
+func (kv *KVServer) checkTransactionDone(client_id uint32, trans_id uint32) bool {
 	request_id := kv.calculateRequestId(client_id, trans_id)
 	value, ok := kv.request_done[request_id]
 	if !ok {
@@ -89,7 +89,7 @@ func (kv *KVServer) checkTransID(client_id uint32, trans_id uint32) bool {
 	return value
 }
 
-func (kv *KVServer) setTransID(client_id uint32, trans_id uint32, done bool) {
+func (kv *KVServer) setTransactionDone(client_id uint32, trans_id uint32, done bool) {
 	request_id := kv.calculateRequestId(client_id, trans_id)
 
 	kv.request_done[request_id] = done
@@ -158,7 +158,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	reply.Receive = true
 
 	kv.mu.Lock()
-	duplicate := kv.checkTransID(args.Client_id, args.Trans_id)
+	duplicate := kv.checkTransactionDone(args.Client_id, args.Trans_id)
 	if duplicate {
 		request_id := kv.calculateRequestId(args.Client_id, args.Trans_id)
 		done := kv.request_done[request_id]
@@ -172,7 +172,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 	request_id := kv.calculateRequestId(args.Client_id, args.Trans_id)
-	kv.setTransID(args.Client_id, args.Trans_id, false)
+	kv.setTransactionDone(args.Client_id, args.Trans_id, false)
 
 	op := Op{
 		Type:       "Get",
@@ -206,7 +206,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	reply.Receive = true
 
 	kv.mu.Lock()
-	duplicate := kv.checkTransID(args.Client_id, args.Trans_id)
+	duplicate := kv.checkTransactionDone(args.Client_id, args.Trans_id)
 	if duplicate {
 		kv.mu.Unlock()
 		DPrintln("duplicate PutAppend RPC client id is", args.Client_id, "trans id is", args.Trans_id)
@@ -214,7 +214,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 
 	request_id := kv.calculateRequestId(args.Client_id, args.Trans_id)
-	kv.setTransID(args.Client_id, args.Trans_id, false)
+	kv.setTransactionDone(args.Client_id, args.Trans_id, false)
 
 	op := Op{
 		Type:       args.Op,
@@ -286,7 +286,7 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 	}
 
 	kv.applyed_index = command.CommandIndex
-	kv.setTransID(op.Client_id, op.Trans_id, true)
+	kv.setTransactionDone(op.Client_id, op.Trans_id, true)
 	close(notify.ch)
 
 	DPrintln("[Server]", kv.me, " [applier] success apply", op.Request_id, "raft index", command.CommandIndex)
