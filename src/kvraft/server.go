@@ -47,7 +47,6 @@ type applyNotify struct {
 	key     string
 	value   string
 	err     Err
-	done    bool
 }
 
 type raftLog struct {
@@ -72,51 +71,28 @@ type KVServer struct {
 	data          map[string]string
 	notifier      map[uint64](*applyNotify)
 	applyed_index int
-	trans_id      map[uint32](map[uint32]uint64)
+	request_done      map[uint64](bool)
 	raft_chan     chan raftLog
 }
 
-func (kv *KVServer) getRequestId(client_id uint32, trans_id uint32) uint64 {
+func (kv *KVServer) calculateRequestId(client_id uint32, trans_id uint32) uint64 {
 	return uint64(client_id)<<32 + uint64(trans_id)
 }
 
 func (kv *KVServer) checkTransID(client_id uint32, trans_id uint32) bool {
-	cmap, ok := kv.trans_id[client_id]
+	request_id := kv.calculateRequestId(client_id, trans_id)
+	value, ok := kv.request_done[request_id]
 	if !ok {
 		return false
 	}
 
-	_, ok = cmap[trans_id]
-	if !ok {
-		return false
-	}
-
-	_, ok = kv.notifier[cmap[trans_id]]
-	if !ok {
-		return false
-	}
-
-	if !kv.notifier[cmap[trans_id]].done {
-		return false
-	}
-
-	return true
+	return value
 }
 
-func (kv *KVServer) setTransID(client_id uint32, trans_id uint32, request_id uint64) {
-	cmap, ok := kv.trans_id[client_id]
-	if !ok {
-		kv.trans_id[client_id] = make(map[uint32]uint64)
-		cmap = kv.trans_id[client_id]
-	}
-	_, ok = cmap[trans_id]
-	if ok {
-		if cmap[trans_id] != request_id {
-			panic("request_id error")
-		}
-		return
-	}
-	cmap[trans_id] = request_id
+func (kv *KVServer) setTransID(client_id uint32, trans_id uint32, done bool) {
+	request_id := kv.calculateRequestId(client_id, trans_id)
+
+	kv.request_done[request_id] = done
 	DPrintln("Server", kv.me, "allocate requestId", request_id, "for client", client_id, "trans id", trans_id)
 }
 
@@ -184,9 +160,10 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.mu.Lock()
 	duplicate := kv.checkTransID(args.Client_id, args.Trans_id)
 	if duplicate {
-		tmp, ok := kv.trans_id[args.Client_id][args.Trans_id]
-		if ok {
-			reply.Value = kv.notifier[tmp].value
+		request_id := kv.calculateRequestId(args.Client_id, args.Trans_id)
+		done := kv.request_done[request_id]
+		if done {
+			reply.Value = kv.notifier[request_id].value
 		} else {
 			reply.Err = Err("cache can not find")
 		}
@@ -194,8 +171,8 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		DPrintln("duplicate Get RPC")
 		return
 	}
-	request_id := kv.getRequestId(args.Client_id, args.Trans_id)
-	kv.setTransID(args.Client_id, args.Trans_id, request_id)
+	request_id := kv.calculateRequestId(args.Client_id, args.Trans_id)
+	kv.setTransID(args.Client_id, args.Trans_id, false)
 
 	op := Op{
 		Type:       "Get",
@@ -236,8 +213,8 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 
-	request_id := kv.getRequestId(args.Client_id, args.Trans_id)
-	kv.setTransID(args.Client_id, args.Trans_id, request_id)
+	request_id := kv.calculateRequestId(args.Client_id, args.Trans_id)
+	kv.setTransID(args.Client_id, args.Trans_id, false)
 
 	op := Op{
 		Type:       args.Op,
@@ -273,12 +250,13 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 	op := command.Command.(Op)
 	DPrintln("[applier] op is", op)
 
-	notify, ok := kv.notifier[op.Request_id]
-	if ok && notify.done {
+	if kv.request_done[op.Request_id] {
 		DPrintln("Server ", kv.me, "alreay done", op.Request_id)
 		kv.mu.Unlock()
 		return
 	}
+
+	notify, ok := kv.notifier[op.Request_id]
 
 	if !ok {
 		tmp_notify_ch := make(chan struct{})
@@ -307,9 +285,8 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 		}
 	}
 
-	notify.done = true
 	kv.applyed_index = command.CommandIndex
-	kv.setTransID(op.Client_id, op.Trans_id, op.Request_id)
+	kv.setTransID(op.Client_id, op.Trans_id, true)
 	close(notify.ch)
 
 	DPrintln("[Server]", kv.me, " [applier] success apply", op.Request_id, "raft index", command.CommandIndex)
@@ -317,20 +294,25 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 	kv.mu.Unlock()
 }
 
-func (kv *KVServer) applySnapshot(command raft.ApplyMsg) {
-	kv.mu.Lock()
-	r := bytes.NewBuffer(command.Snapshot)
+func (kv *KVServer) readSnapshot(snapshot_data []byte) {
+	r := bytes.NewBuffer(snapshot_data)
 	d := labgob.NewDecoder(r)
 	m := make(map[string]string)
 	apply_index := 0
-	// request_id := 0
-	// FIXME: is request_id need to save?
-	ok := d.Decode(&m) == nil && d.Decode(apply_index) == nil // && d.Decode(&request_id) == nil
+	request_done := make(map[uint64]bool)
+	ok := d.Decode(&m) == nil &&
+		d.Decode(&apply_index) == nil &&
+		d.Decode(&request_done)== nil
 	if ok {
 		kv.data = m
 		kv.applyed_index = apply_index
-		// kv.request_id = uint64(request_id)
+		kv.request_done = request_done
 	}
+}
+
+func (kv *KVServer) applySnapshot(command raft.ApplyMsg) {
+	kv.mu.Lock()
+	kv.readSnapshot(command.Snapshot)
 	kv.mu.Unlock()
 }
 
@@ -354,6 +336,7 @@ func (kv *KVServer) applier() {
 			e := labgob.NewEncoder(w)
 			e.Encode(kv.data)
 			e.Encode(kv.applyed_index)
+			e.Encode(kv.request_done)
 			data := w.Bytes()
 			kv.rf.Snapshot(kv.applyed_index, data)
 			kv.mu.Unlock()
@@ -409,8 +392,10 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.data = make(map[string]string)
 	kv.notifier = make(map[uint64](*applyNotify))
 	kv.persister = persister
-	kv.trans_id = make(map[uint32](map[uint32]uint64))
+	kv.request_done = make(map[uint64](bool))
 	kv.raft_chan = make(chan raftLog, kv.chanel_buffer)
+	snapshot_data := persister.ReadSnapshot()
+	kv.readSnapshot(snapshot_data)
 	go kv.applier()
 	go kv.sendToRaft()
 
