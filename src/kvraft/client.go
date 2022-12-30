@@ -12,8 +12,8 @@ import (
 var used_me_number_lock sync.Mutex
 var used_me_number map[uint32](bool) = make(map[uint32](bool))
 
-const RPC_RETRY_TIMES = 100
-const RPC_WAIT_TIME_MS = 200
+const RPC_RETRY_TIMES = 50
+const RPC_WAIT_TIME_MS = 500
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
@@ -35,6 +35,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+	// FIXME: what if client id run out?
 	used_me_number_lock.Lock()
 	for {
 		i := uint32(nrand())
@@ -50,7 +51,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	return ck
 }
 
-// FIXME: reply should contain leader id
+// TODO: reply should contain leader id
 func (ck *Clerk) changeLeader() {
 	ck.leader = (ck.leader + 1) % len(ck.servers)
 }
@@ -83,16 +84,24 @@ func (ck *Clerk) Get(key string) string {
 		Trans_id:  ck.getTransId(),
 	}
 	not_leader_time := 0
+	rpc_failed_times := 0
 	for i := 0; i < RPC_RETRY_TIMES; i++ {
 		DPrintln("[Client] trying Get", "client", ck.me, "trans id", args.Trans_id)
 		reply := &GetReply{}
 		ok := ck.servers[ck.leader].Call("KVServer.Get", args, reply)
 		if !ok {
 			ck.changeLeader()
+			rpc_failed_times += 1
+			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
 			continue
 		}
 
 		if reply.Err == "" {
+			return reply.Value
+		}
+
+		if reply.Err == DUPLICATE_GET {
+			DPrintln("[Client] returning cache")
 			return reply.Value
 		}
 
@@ -104,15 +113,15 @@ func (ck *Clerk) Get(key string) string {
 		}
 
 		if reply.Err == INTERNAL_ERROR {
-			panic(INTERNAL_ERROR)
+			// panic(INTERNAL_ERROR)
 			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
 			continue
 		}
 
-		DPrintln("Get error: ", reply.Err)
+		DPrintln("[Client] Get error: ", reply.Err)
 		return "nil: Get error"
 	}
-	DPrintln("Get error, not leader time is", not_leader_time)
+	DPrintln("[Client] Get final error, not_leader_time is, rpc_failed_times is", not_leader_time, rpc_failed_times)
 	// panic("Get error")
 
 	// You will have to modify this function.
@@ -139,38 +148,46 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		Trans_id:  ck.getTransId(),
 	}
 	not_leader_times := 0
+	rpc_failed_times := 0
 	for i := 0; i < RPC_RETRY_TIMES; i++ {
-		DPrintln("[Client] trying Get", "client", ck.me, "trans id", args.Trans_id)
+		DPrintln("[Client] trying PutAppend", "client", ck.me, "trans id", args.Trans_id)
 		reply := &PutAppendReply{}
 		ok := ck.servers[ck.getLeader()].Call("KVServer.PutAppend", args, reply)
 		if !ok {
 			ck.changeLeader()
+			rpc_failed_times += 1
+			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
 			continue
 		}
 		DPrintln("[Client] PutAppend err is", reply.Err)
 		if reply.Err == "" {
-			DPrintln("PutAppend success")
+			DPrintln("[Client] PutAppend success")
+			return
+		}
+
+		if reply.Err == DUPLICATE_PUTAPPEND {
+			DPrintln("[Client]", DUPLICATE_PUTAPPEND)
 			return
 		}
 
 		if reply.Err == NOTLEADER {
 			not_leader_times += 1
-			DPrintln("PutAppend not leader")
+			DPrintln("[Client] PutAppend not leader")
 			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
 			ck.changeLeader()
 			continue
 		}
 
 		if reply.Err == INTERNAL_ERROR {
-			panic(INTERNAL_ERROR)
+			// panic(INTERNAL_ERROR)
 			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
 			continue
 		}
 
-		DPrintln("PutAppend error:", reply.Err)
+		DPrintln("[Client] PutAppend error:", reply.Err)
 		return
 	}
-	DPrintln("PutAppend error, not leader times is", not_leader_times)
+	DPrintln("[Client] PutAppend final error, not_leader_times is, rpc_faild_times is", not_leader_times, rpc_failed_times)
 	// panic("PutAppend error")
 }
 

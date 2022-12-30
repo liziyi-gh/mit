@@ -41,4 +41,6 @@ type GetReply struct {
 }
 
 const NOTLEADER = "Not leader"
-const INTERNAL_ERROR = "[Server] Internal error"
+const INTERNAL_ERROR = "Internal error"
+const DUPLICATE_GET = "Duplicate get"
+const DUPLICATE_PUTAPPEND = "Duplicate putappend"
