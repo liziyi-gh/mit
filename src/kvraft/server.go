@@ -128,9 +128,6 @@ func (kv *KVServer) sendRaftLog(raftlog raftLog) {
 			DPrintln("sendRaftLog timeout, request_id", op.Request_id)
 			continue
 		case <-notify_ch:
-			kv.mu.Lock()
-			kv.setTransactionDuplicate(op.Client_id, op.Trans_id)
-			kv.mu.Unlock()
 			return
 		}
 	}
@@ -304,6 +301,7 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 
 	kv.applyed_index = command.CommandIndex
 	kv.setTransactionDone(op.Client_id, op.Trans_id)
+	kv.setTransactionDuplicate(op.Client_id, op.Trans_id)
 	close(notify.ch)
 
 	DPrintln("[Server]", kv.me, " [applier] success apply", op.Request_id, "raft index", command.CommandIndex)
