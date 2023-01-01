@@ -3,7 +3,6 @@ package kvraft
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,9 +14,27 @@ import (
 
 const Debug = true
 
+func (kv *KVServer) checkNotifierKey() {
+	for k, v := range kv.transcation_duplicate {
+		request_id := kv.calculateRequestId(k, v)
+		_, ok := kv.notifier[request_id]
+		if !ok {
+			DPrintln("no notifer for request_id", request_id)
+			panic("notifer lack")
+		}
+	}
+}
+
+func (kv *KVServer) setNotifier(request_id uint64, notify *applyNotify) {
+	kv.notifier[request_id] = notify
+	DPrintln("set_notifer_for", request_id)
+	// kv.checkNotifierKey()
+}
+
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
-		log.Printf(format, a...)
+		fmt.Printf(format, a...)
+		fmt.Print("\n")
 	}
 	return
 }
@@ -86,7 +103,7 @@ func (kv *KVServer) checkTransactionDone(client_id uint32, trans_id uint32) bool
 
 func (kv *KVServer) setTransactionDone(client_id uint32, trans_id uint32) {
 	if trans_id < kv.client_apply[client_id] {
-		panic("trans_id < kv.client_apply[client_id]")
+		DPrintln("setting trans_id < kv.client_apply[client_id]")
 	}
 	kv.client_apply[client_id] = trans_id
 }
@@ -117,7 +134,7 @@ func (kv *KVServer) sendRaftLog(raftlog raftLog) {
 			return
 		}
 		kv.mu.Unlock()
-		DPrintln("Server", kv.me, "trying Start client id", op.Client_id, "trans id", op.Trans_id, "request id", op.Request_id)
+		DPrintln("Server", kv.me, "trying sendRaftLog client id", op.Client_id, "trans id", op.Trans_id, "request id", op.Request_id)
 		_, _, is_leader := kv.rf.Start(*op)
 		if !is_leader {
 			ch <- NOTLEADER
@@ -152,7 +169,7 @@ func (kv *KVServer) sendOneOp(request_id uint64, op *Op) (chan string, *applyNot
 		ch: notify_ch,
 	}
 
-	kv.notifier[request_id] = notify
+	kv.setNotifier(request_id, notify)
 
 	raftlog := raftLog{
 		op:        op,
@@ -168,25 +185,31 @@ func (kv *KVServer) sendOneOp(request_id uint64, op *Op) (chan string, *applyNot
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	reply.Receive = true
-
 	kv.mu.Lock()
 	duplicate := kv.checkTransactionDuplicate(args.Client_id, args.Trans_id)
+	request_id := kv.calculateRequestId(args.Client_id, args.Trans_id)
+	reply.RequestId = request_id
 	if duplicate {
-		request_id := kv.calculateRequestId(args.Client_id, args.Trans_id)
 		done := kv.checkTransactionDone(args.Client_id, args.Trans_id)
 		if done {
-			DPrintln("returning cache")
-			reply.Err = DUPLICATE_GET
-			reply.Value = kv.notifier[request_id].value
-		} else {
-			reply.Err = Err("cache can not find")
+			_, ok := kv.notifier[request_id]
+			if ok {
+				DPrintln("returning cache for request_id", request_id)
+				reply.Err = DUPLICATE_GET
+				reply.Value = kv.notifier[request_id].value
+				kv.mu.Unlock()
+				DPrintln("duplicate Get RPC from client", args.Client_id, "trans_id", args.Trans_id)
+				return
+			} else {
+				// Snapshot 导致有的服务器没有跟上 之前处理这个请求的服务器已经不是 leader 了
+				// Server 处理完了 RPC 时刚好挂了 Client 没有收到回复 但是 Raft 集群已经处理完了
+				// 怎么办
+				// 究竟为什么只是 snapshot 的测试例没跑过
+				kv.setTransactionDone(args.Client_id, args.Trans_id-1)
+				DPrintf("Server[%v] no_cache for request_id %v", kv.me, request_id)
+			}
 		}
-		kv.mu.Unlock()
-		DPrintln("duplicate Get RPC")
-		return
 	}
-	request_id := kv.calculateRequestId(args.Client_id, args.Trans_id)
 
 	op := Op{
 		Type:       "Get",
@@ -208,7 +231,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	case <-notify.ch:
 		reply.Value = notify.value
 		reply.Err = notify.err
-		DPrintln("receive notify for requestID", op.Request_id)
+		DPrintln("Get receive notify for requestID", op.Request_id)
 		DPrintln("[Server] [Get] lzy: return value is", reply.Value)
 		return
 	}
@@ -217,8 +240,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
-	reply.Receive = true
-
 	kv.mu.Lock()
 	duplicate := kv.checkTransactionDuplicate(args.Client_id, args.Trans_id)
 	if duplicate {
@@ -252,7 +273,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 	case <-notify.ch:
 		reply.Err = notify.err
-		DPrintln("receive notify for requestID", op.Request_id)
+		DPrintln("PutAppend receive notify for requestID", op.Request_id)
 		DPrintln("[Server] [PutAppend] return with err", reply.Err)
 		return
 	}
@@ -277,7 +298,7 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 		tmp_notify := &applyNotify{
 			ch: tmp_notify_ch,
 		}
-		kv.notifier[op.Request_id] = tmp_notify
+		kv.setNotifier(op.Request_id, tmp_notify)
 		notify = tmp_notify
 	}
 
@@ -291,10 +312,12 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 	case "Append":
 		origin_value, ok := kv.data[op.Key]
 		if !ok {
-			DPrintln("[Server]", kv.me, " [applier] update", op.Key, "to", op.Value)
+			DPrintln("[Server]", kv.me,
+				"[applier] update", op.Key, "to", op.Value)
 			kv.data[op.Key] = op.Value
 		} else {
-			DPrintln("[Server]", kv.me, " [applier] update", op.Key, "to", origin_value+op.Value)
+			DPrintln("[Server]", kv.me,
+				"[applier] update", op.Key, "to", origin_value+op.Value)
 			kv.data[op.Key] = origin_value + op.Value
 		}
 	}
@@ -304,7 +327,9 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 	kv.setTransactionDuplicate(op.Client_id, op.Trans_id)
 	close(notify.ch)
 
-	DPrintln("[Server]", kv.me, " [applier] success apply", op.Request_id, "raft index", command.CommandIndex)
+	DPrintln("[Server]", kv.me,
+		"[applier] success apply",
+		op.Request_id, "raft index", command.CommandIndex)
 
 	kv.mu.Unlock()
 }
@@ -326,11 +351,13 @@ func (kv *KVServer) readSnapshot(snapshot_data []byte) {
 		kv.applyed_index = apply_index
 		kv.transcation_duplicate = transcation_duplicate
 		kv.client_apply = client_apply
+		DPrintf("Server[%v] read snapshot success", kv.me)
 	}
 }
 
 func (kv *KVServer) applySnapshot(command raft.ApplyMsg) {
 	kv.mu.Lock()
+	DPrintf("Server[%v] applySnapshot", kv.me)
 	kv.readSnapshot(command.Snapshot)
 	kv.mu.Unlock()
 }

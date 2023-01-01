@@ -56,10 +56,6 @@ func (ck *Clerk) changeLeader() {
 	ck.leader = (ck.leader + 1) % len(ck.servers)
 }
 
-func (ck *Clerk) getLeader() int {
-	return ck.leader
-}
-
 func (ck *Clerk) getTransId() uint32 {
 	ck.trans_id += 1
 	return ck.trans_id
@@ -96,6 +92,22 @@ func (ck *Clerk) Get(key string) string {
 			continue
 		}
 
+		if reply.Err == NOTLEADER {
+			not_leader_time += 1
+			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
+			ck.changeLeader()
+			continue
+		}
+
+		if reply.Err == INTERNAL_ERROR {
+			not_leader_time += 1
+			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
+			ck.changeLeader()
+			continue
+		}
+
+		DPrintln("[Client] Receive reply for Get_request", reply.RequestId, "err is", reply.Err)
+
 		if reply.Err == "" {
 			return reply.Value
 		}
@@ -105,27 +117,12 @@ func (ck *Clerk) Get(key string) string {
 			return reply.Value
 		}
 
-		if reply.Err == NOTLEADER {
-			not_leader_time += 1
-			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
-			ck.changeLeader()
-			continue
-		}
-
-		if reply.Err == INTERNAL_ERROR {
-			// panic(INTERNAL_ERROR)
-			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
-			continue
-		}
-
 		DPrintln("[Client] Get error: ", reply.Err)
-		return "nil: Get error"
+		return GET_ERROR_REPLY
 	}
-	DPrintln("[Client] Get final error, not_leader_time is, rpc_failed_times is", not_leader_time, rpc_failed_times)
-	// panic("Get error")
 
 	// You will have to modify this function.
-	return "nil: Get error"
+	return GET_ERROR_REPLY
 }
 
 // shared by Put and Append.
@@ -152,7 +149,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	for i := 0; i < RPC_RETRY_TIMES; i++ {
 		DPrintln("[Client] trying PutAppend", "client", ck.me, "trans id", args.Trans_id)
 		reply := &PutAppendReply{}
-		ok := ck.servers[ck.getLeader()].Call("KVServer.PutAppend", args, reply)
+		ok := ck.servers[ck.leader].Call("KVServer.PutAppend", args, reply)
 		if !ok {
 			ck.changeLeader()
 			rpc_failed_times += 1
@@ -179,7 +176,6 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		}
 
 		if reply.Err == INTERNAL_ERROR {
-			// panic(INTERNAL_ERROR)
 			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
 			continue
 		}
@@ -188,7 +184,6 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		return
 	}
 	DPrintln("[Client] PutAppend final error, not_leader_times is, rpc_faild_times is", not_leader_times, rpc_failed_times)
-	// panic("PutAppend error")
 }
 
 func (ck *Clerk) Put(key string, value string) {

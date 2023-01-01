@@ -13,18 +13,20 @@ do
     TESTER_LOG_FILE=${test_path}/tester.${i}.log
     RAFT_LOG_FILE=${test_path}/raft.log
 
-    go test -run TestBasic3A -race > ${TESTER_LOG_FILE}
+    # go test -run TestBasic3A -race > ${TESTER_LOG_FILE}
     # go test -run TestConcurrent3A -race > ${TESTER_LOG_FILE}
     # go test -run TestUnreliable3A -race > ${TESTER_LOG_FILE}
     # go test -run TestUnreliableOneKey3A  -race > ${TESTER_LOG_FILE}
     # go test -run TestOnePartition3A  -race > ${TESTER_LOG_FILE}
-    # go test -run TestManyPartitionsOneClient3A  -race > ${TESTER_LOG_FILE}
+    # go test -run TestManyPartitionsOneClient3A -race > ${TESTER_LOG_FILE}
+    # go test -run TestManyPartitionsManyClients3A -race > ${TESTER_LOG_FILE}
     # go test -run TestPersistOneClient3A -race > ${TESTER_LOG_FILE}
     # go test -run TestPersistConcurrent3A -race > ${TESTER_LOG_FILE}
     # go test -run TestPersistPartitionUnreliableLinearizable3A -race > ${TESTER_LOG_FILE}
     # go test -run 3A -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotRPC3B -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotSize3B -race > ${TESTER_LOG_FILE}
+    go test -run TestSnapshotUnreliable3B -race > ${TESTER_LOG_FILE}
     # go test -run 3B -race > ${TESTER_LOG_FILE}
 
     tmp=$(rg FAIL ${TESTER_LOG_FILE})

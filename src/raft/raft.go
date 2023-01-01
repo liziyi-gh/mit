@@ -905,8 +905,6 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		// prevent heartbeat commit some logs that should not commit
 		if rf.hasLog() {
 			if matched && args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
-				log.Print("Server[", rf.me, "] going to commit heartbeat args:", args)
-				log.Print("Server[", rf.me, "] have log", rf.log)
 				rf.updateCommitIndex(args.PREV_LOG_INDEX)
 			}
 		}
