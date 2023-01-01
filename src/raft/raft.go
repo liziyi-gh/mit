@@ -35,7 +35,7 @@ import (
 
 const Raft_debug = true
 
-func dPrintf(format string, a ...interface{})  {
+func dPrintf(format string, a ...interface{}) {
 	if Raft_debug {
 		log.Printf(format, a...)
 	}
@@ -974,7 +974,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	dPrintln("Server[", rf.me, "] got vote request args is ", args)
+	dPrintf("Server[%v] got vote request args is %v", rf.me, args)
 
 	reply.VOTE_GRANTED = false
 	reply.TERM = rf.current_term
