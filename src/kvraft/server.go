@@ -311,7 +311,6 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 	kv.applyed_index = command.CommandIndex
 	kv.setTransactionDone(op.Client_id, op.Trans_id)
 	kv.setTransactionDuplicate(op.Client_id, op.Trans_id)
-	// FIXME: readSnapshot 可能导致重复执行操作 然后重复 close channel
 	if need_notify {
 		close(notify.ch)
 	}
