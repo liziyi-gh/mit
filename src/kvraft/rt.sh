@@ -27,9 +27,9 @@ do
     # go test -run TestSnapshotRPC3B -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotSize3B -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotRecoverManyClients3B -race > ${TESTER_LOG_FILE}
-    go test -run TestSnapshotUnreliableRecover3B -race > ${TESTER_LOG_FILE}
+    # go test -run TestSnapshotUnreliableRecover3B -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotUnreliableRecoverConcurrentPartitionLinearizable3B -race > ${TESTER_LOG_FILE}
-    # go test -run 3B -race > ${TESTER_LOG_FILE}
+    go test -run 3B -race > ${TESTER_LOG_FILE}
 
     tmp=$(rg FAIL ${TESTER_LOG_FILE})
     tmp2=$(rg "DATA RACE" ${TESTER_LOG_FILE})

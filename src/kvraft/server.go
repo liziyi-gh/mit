@@ -186,6 +186,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 			// Server 处理完了 RPC 时刚好挂了 Client 没有收到回复 但是 Raft 集群已经处理完了
 			// 怎么办
 			// 究竟为什么只是 snapshot 的测试例没跑过
+			// 这样直接再做一次只能保证同一个 Clerk 看到的结果的一致性 无法保证线性一致性?
 			kv.setTransactionDone(args.Client_id, args.Trans_id-1)
 			DPrintf("Server[%v] no_cache for request_id %v", kv.me, request_id)
 		}
