@@ -14,21 +14,9 @@ import (
 
 const Debug = true
 
-func (kv *KVServer) checkNotifierKey() {
-	for k, v := range kv.transcation_duplicate {
-		request_id := kv.calculateRequestId(k, v)
-		_, ok := kv.notifier[request_id]
-		if !ok {
-			DPrintln("no notifer for request_id", request_id)
-			panic("notifer lack")
-		}
-	}
-}
-
 func (kv *KVServer) setNotifier(request_id uint64, notify *applyNotify) {
 	kv.notifier[request_id] = notify
 	DPrintln("set_notifer_for", request_id)
-	// kv.checkNotifierKey()
 }
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
@@ -185,11 +173,11 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	reply.RequestId = request_id
 	done := kv.checkTransactionDone(args.Client_id, args.Trans_id)
 	if done {
-		_, ok := kv.notifier[request_id]
+		cache, ok := kv.notifier[request_id]
 		if ok {
 			DPrintln("returning cache for request_id", request_id)
 			reply.Err = DUPLICATE_GET
-			reply.Value = kv.notifier[request_id].value
+			reply.Value = cache.value
 			kv.mu.Unlock()
 			DPrintln("duplicate Get RPC from client", args.Client_id, "trans_id", args.Trans_id)
 			return
