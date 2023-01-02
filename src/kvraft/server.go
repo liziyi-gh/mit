@@ -201,6 +201,12 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	ch, notify := kv.sendOneOp(request_id, &op)
 	kv.mu.Unlock()
 
+	defer func(){
+		kv.mu.Lock()
+		delete(kv.notifier, request_id)
+		kv.mu.Unlock()
+	}()
+
 	select {
 
 	case err := <-ch:
@@ -244,6 +250,12 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 	kv.mu.Unlock()
 
+	defer func(){
+		kv.mu.Lock()
+		delete(kv.notifier, request_id)
+		kv.mu.Unlock()
+	}()
+
 	select {
 
 	case err := <-ch:
@@ -271,23 +283,16 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 		return
 	}
 
-	notify, ok := kv.notifier[op.Request_id]
-
-	if !ok {
-		tmp_notify_ch := make(chan struct{})
-		tmp_notify := &applyNotify{
-			ch: tmp_notify_ch,
-		}
-		kv.setNotifier(op.Request_id, tmp_notify)
-		notify = tmp_notify
-	}
+	notify, need_notify := kv.notifier[op.Request_id]
 
 	switch op.Type {
 	case "Get":
-		DPrintln("[Server]", kv.me, " [applier] get", op.Key, "as", kv.data[op.Key])
-		notify.value = kv.data[op.Key]
+		if need_notify {
+			DPrintln("[Server]", kv.me, "[applier] get", op.Key, "as", kv.data[op.Key])
+			notify.value = kv.data[op.Key]
+		}
 	case "Put":
-		DPrintln("[Server]", kv.me, " [applier] set", op.Key, "to", op.Value)
+		DPrintln("[Server]", kv.me, "[applier] set", op.Key, "to", op.Value)
 		kv.data[op.Key] = op.Value
 	case "Append":
 		origin_value, ok := kv.data[op.Key]
@@ -305,7 +310,10 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 	kv.applyed_index = command.CommandIndex
 	kv.setTransactionDone(op.Client_id, op.Trans_id)
 	kv.setTransactionDuplicate(op.Client_id, op.Trans_id)
-	close(notify.ch)
+	// FIXME: readSnapshot 可能导致重复执行操作 然后重复 close channel
+	if need_notify {
+		close(notify.ch)
+	}
 
 	DPrintln("[Server]", kv.me,
 		"[applier] success apply",

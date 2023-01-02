@@ -35,7 +35,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
-	// FIXME: what if client id run out?
+	// FIXME: what if client id run out? add close
 	used_me_number_lock.Lock()
 	for {
 		i := uint32(nrand())
