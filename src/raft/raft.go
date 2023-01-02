@@ -633,7 +633,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 			CommandIndex: idx,
 		}
 		dPrintf("Server[%d] send index %d to internal channel", rf.me, tmp.CommandIndex)
-		// FIXME: use channel comunicate can been block
+		// FIXME: use channel communicate can been block and cause dead lock
 		rf.internal_apply_chan <- tmp
 		rf.commit_index_in_quorom = idx
 	}
@@ -1510,7 +1510,7 @@ release_lock_and_return:
 }
 
 func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
-	// TODO: sometimes this function run args nearly same time?
+	// NOTE: sometimes this function run args nearly same time?
 	// just because schedule?
 	defer func() { ch <- struct{}{} }()
 	rf.mu.Lock()
@@ -1527,13 +1527,11 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 	}
 
 	args := rf.buildNewestArgs()
-	log.Print("Server[", rf.me, "] running handleAppendEntryForOneServer for server", server, "args is ", args)
 	failed_times := 0
 
 	if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] {
 		// NOTE: why here cause problem? should promise next_index would not update by mistake,
 		// so should promise update next_index in right term
-		log.Print("Server[", rf.me, "] skip args ", args, "because peer ", server, " already have")
 		goto release_lock_and_return
 	}
 
@@ -1584,7 +1582,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 
 		if need_snapshot {
 			rf.mu.Unlock()
-			dPrintln("Server[", server, "] need snapshot")
+			dPrintf("Server[%v] need snapshot", server)
 			rf.sendSnapshot(server, this_round_term)
 			return
 		} else {
@@ -1682,7 +1680,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.AppendLog(new_log)
 	go rf.newRoundAppend(command, new_log_index)
 
-	dPrintln("Server[", rf.me, "] Start accept new log:", new_log)
+	dPrintf("Server[%v] Start accept new log: %v", rf.me, new_log)
 
 	return new_log_index, term, isLeader
 }
