@@ -108,11 +108,6 @@ func (kv *KVServer) setTransactionDone(client_id uint32, trans_id uint32) {
 	kv.client_apply[client_id] = trans_id
 }
 
-func (kv *KVServer) checkTransactionDuplicate(client_id uint32, trans_id uint32) bool {
-	value := kv.transcation_duplicate[client_id]
-	return value >= trans_id
-}
-
 func (kv *KVServer) setTransactionDuplicate(client_id uint32, trans_id uint32) {
 	kv.transcation_duplicate[client_id] = trans_id
 	DPrintln("Server", kv.me, "allocate", "for client", client_id, "trans id", trans_id)
@@ -127,10 +122,10 @@ func (kv *KVServer) sendRaftLog(raftlog raftLog) {
 	retry_times := 10
 	for i := 0; i < retry_times; i++ {
 		kv.mu.Lock()
-		duplicate := kv.checkTransactionDuplicate(op.Client_id, op.Trans_id)
-		if duplicate {
+		done := kv.checkTransactionDone(op.Client_id, op.Trans_id)
+		if done {
 			kv.mu.Unlock()
-			DPrintln("[sendRaftLog] duplicate op", op)
+			DPrintf("Server[%v] [sendRaftLog] op %v already done", kv.me, op.Request_id)
 			return
 		}
 		kv.mu.Unlock()
@@ -186,28 +181,25 @@ func (kv *KVServer) sendOneOp(request_id uint64, op *Op) (chan string, *applyNot
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	kv.mu.Lock()
-	duplicate := kv.checkTransactionDuplicate(args.Client_id, args.Trans_id)
 	request_id := kv.calculateRequestId(args.Client_id, args.Trans_id)
 	reply.RequestId = request_id
-	if duplicate {
-		done := kv.checkTransactionDone(args.Client_id, args.Trans_id)
-		if done {
-			_, ok := kv.notifier[request_id]
-			if ok {
-				DPrintln("returning cache for request_id", request_id)
-				reply.Err = DUPLICATE_GET
-				reply.Value = kv.notifier[request_id].value
-				kv.mu.Unlock()
-				DPrintln("duplicate Get RPC from client", args.Client_id, "trans_id", args.Trans_id)
-				return
-			} else {
-				// Snapshot 导致有的服务器没有跟上 之前处理这个请求的服务器已经不是 leader 了
-				// Server 处理完了 RPC 时刚好挂了 Client 没有收到回复 但是 Raft 集群已经处理完了
-				// 怎么办
-				// 究竟为什么只是 snapshot 的测试例没跑过
-				kv.setTransactionDone(args.Client_id, args.Trans_id-1)
-				DPrintf("Server[%v] no_cache for request_id %v", kv.me, request_id)
-			}
+	done := kv.checkTransactionDone(args.Client_id, args.Trans_id)
+	if done {
+		_, ok := kv.notifier[request_id]
+		if ok {
+			DPrintln("returning cache for request_id", request_id)
+			reply.Err = DUPLICATE_GET
+			reply.Value = kv.notifier[request_id].value
+			kv.mu.Unlock()
+			DPrintln("duplicate Get RPC from client", args.Client_id, "trans_id", args.Trans_id)
+			return
+		} else {
+			// Snapshot 导致有的服务器没有跟上 之前处理这个请求的服务器已经不是 leader 了
+			// Server 处理完了 RPC 时刚好挂了 Client 没有收到回复 但是 Raft 集群已经处理完了
+			// 怎么办
+			// 究竟为什么只是 snapshot 的测试例没跑过
+			kv.setTransactionDone(args.Client_id, args.Trans_id-1)
+			DPrintf("Server[%v] no_cache for request_id %v", kv.me, request_id)
 		}
 	}
 
@@ -241,8 +233,8 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	kv.mu.Lock()
-	duplicate := kv.checkTransactionDuplicate(args.Client_id, args.Trans_id)
-	if duplicate {
+	done := kv.checkTransactionDone(args.Client_id, args.Trans_id)
+	if done {
 		kv.mu.Unlock()
 		reply.Err = Err(DUPLICATE_PUTAPPEND)
 		DPrintln("duplicate PutAppend RPC client id is", args.Client_id, "trans id is", args.Trans_id)

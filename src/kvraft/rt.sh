@@ -1,6 +1,6 @@
 test_path=/tmp/tmp-fs
 
-rm ./*.log
+rm -f ./*.log
 rm -f ${test_path}/*.log
 
 echo "start test at "
@@ -26,7 +26,9 @@ do
     # go test -run 3A -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotRPC3B -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotSize3B -race > ${TESTER_LOG_FILE}
-    go test -run TestSnapshotUnreliable3B -race > ${TESTER_LOG_FILE}
+    # go test -run TestSnapshotRecoverManyClients3B -race > ${TESTER_LOG_FILE}
+    go test -run TestSnapshotUnreliableRecover3B -race > ${TESTER_LOG_FILE}
+    # go test -run TestSnapshotUnreliableRecoverConcurrentPartitionLinearizable3B -race > ${TESTER_LOG_FILE}
     # go test -run 3B -race > ${TESTER_LOG_FILE}
 
     tmp=$(rg FAIL ${TESTER_LOG_FILE})
