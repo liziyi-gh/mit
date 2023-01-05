@@ -109,11 +109,13 @@ func (kv *KVServer) sendRaftLog(raftlog raftLog) {
 	retry_ms := 1000
 	retry_times := 10
 	for i := 0; i < retry_times; i++ {
+		DPrintf("Server[%v] [sendRaftLog] trying_request_id %v", kv.me, op.Request_id)
 		kv.mu.Lock()
 		done := kv.checkTransactionDone(op.Client_id, op.Trans_id)
 		if done {
 			kv.mu.Unlock()
 			DPrintf("Server[%v] [sendRaftLog] op %v already done", kv.me, op.Request_id)
+			// FIXME: here block
 			ch <- INTERNAL_ERROR
 			return
 		}
@@ -141,13 +143,15 @@ func (kv *KVServer) sendToRaft() {
 		if kv.killed() {
 			return
 		}
-		DPrintln("sendToRaft new raftlog")
+		DPrintf("Server[%v] sendToRaft__start %v", kv.me, raftlog.op.Request_id)
 		kv.sendRaftLog(raftlog)
+		DPrintf("Server[%v] sendToRaft_finish %v", kv.me, raftlog.op.Request_id)
 	}
 }
 
 func (kv *KVServer) sendOneOp(request_id uint64, op *Op) (chan string, *applyNotify) {
-	ch := make(chan string)
+	// FIXME: magic number here
+	ch := make(chan string, 10)
 	notify_ch := make(chan struct{})
 	notify := &applyNotify{
 		ch: notify_ch,
@@ -203,10 +207,13 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	ch, notify := kv.sendOneOp(request_id, &op)
 	kv.mu.Unlock()
 
-	defer func(){
+	DPrintln("Server", kv.me, "get_start_select_for", request_id)
+
+	defer func() {
 		kv.mu.Lock()
 		delete(kv.notifier, request_id)
 		kv.mu.Unlock()
+		DPrintln("Server", kv.me, "get_finish_select_for", request_id)
 	}()
 
 	select {
@@ -251,11 +258,13 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	ch, notify := kv.sendOneOp(request_id, &op)
 
 	kv.mu.Unlock()
+	DPrintln("Server", kv.me, "putappend_start_select_for", request_id)
 
-	defer func(){
+	defer func() {
 		kv.mu.Lock()
 		delete(kv.notifier, request_id)
 		kv.mu.Unlock()
+		DPrintln("Server", kv.me, "putappend_finish_select_for", request_id)
 	}()
 
 	select {
