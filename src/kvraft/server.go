@@ -114,6 +114,7 @@ func (kv *KVServer) sendRaftLog(raftlog raftLog) {
 		if done {
 			kv.mu.Unlock()
 			DPrintf("Server[%v] [sendRaftLog] op %v already done", kv.me, op.Request_id)
+			ch <- INTERNAL_ERROR
 			return
 		}
 		kv.mu.Unlock()

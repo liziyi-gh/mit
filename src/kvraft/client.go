@@ -12,8 +12,8 @@ import (
 var used_me_number_lock sync.Mutex
 var used_me_number map[uint32](bool) = make(map[uint32](bool))
 
-const RPC_RETRY_TIMES = 50
-const RPC_WAIT_TIME_MS = 500
+const RPC_RETRY_TIMES = 200
+const RPC_WAIT_TIME_MS = 100
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
@@ -176,7 +176,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		}
 
 		if reply.Err == INTERNAL_ERROR {
+			ck.changeLeader()
 			time.Sleep(RPC_WAIT_TIME_MS * time.Millisecond)
+			rpc_failed_times += 1
 			continue
 		}
 
@@ -189,6 +191,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 func (ck *Clerk) Put(key string, value string) {
 	ck.PutAppend(key, value, "Put")
 }
+
 func (ck *Clerk) Append(key string, value string) {
 	ck.PutAppend(key, value, "Append")
 }
