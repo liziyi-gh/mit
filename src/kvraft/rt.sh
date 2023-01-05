@@ -24,6 +24,7 @@ do
     # go test -run TestPersistConcurrent3A -race > ${TESTER_LOG_FILE}
     # go test -run TestPersistPartitionUnreliableLinearizable3A -race > ${TESTER_LOG_FILE}
     # go test -run 3A -race > ${TESTER_LOG_FILE}
+    # go test -run TestSnapshotUnreliable3B -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotRPC3B -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotSize3B -race > ${TESTER_LOG_FILE}
     # go test -run TestSnapshotRecoverManyClients3B -race > ${TESTER_LOG_FILE}
