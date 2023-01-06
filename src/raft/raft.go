@@ -193,7 +193,6 @@ type Raft struct {
 	enable_feature_prevote bool
 }
 
-// use this function with lock
 func (rf *Raft) GetPositionByIndex(index int) (int, bool) {
 	for i := rf.LogLength() - 1; i >= 0; i-- {
 		if rf.log[i].INDEX == index {
@@ -203,17 +202,14 @@ func (rf *Raft) GetPositionByIndex(index int) (int, bool) {
 	return 0, false
 }
 
-// use this function with lock
 func (rf *Raft) GetIndexByPosition(position int) int {
 	return rf.log[position].INDEX
 }
 
-// use this function with lock
 func (rf *Raft) LogLength() int {
 	return len(rf.log)
 }
 
-// use this function with lock
 func (rf *Raft) GetLogTermByIndex(index int) int {
 	position, ok := rf.GetPositionByIndex(index)
 	if !ok {
@@ -222,7 +218,6 @@ func (rf *Raft) GetLogTermByIndex(index int) int {
 	return rf.log[position].TERM
 }
 
-// use this function with lock
 func (rf *Raft) GetLogCommandByIndex(index int) (interface{}, bool) {
 	position, ok := rf.GetPositionByIndex(index)
 	if !ok {
@@ -232,12 +227,10 @@ func (rf *Raft) GetLogCommandByIndex(index int) (interface{}, bool) {
 	return rf.log[position].COMMAND, true
 }
 
-// use this function with lock
 func (rf *Raft) hasLog() bool {
 	return rf.LogLength() >= 1
 }
 
-// use this function with lock
 func (rf *Raft) GetLatestLogRef() *Log {
 	if rf.hasLog() {
 		return &rf.log[len(rf.log)-1]
@@ -245,7 +238,6 @@ func (rf *Raft) GetLatestLogRef() *Log {
 	return nil
 }
 
-// use this function with lock
 func (rf *Raft) GetLatestLogIndex() int {
 	if rf.hasLog() {
 		return rf.log[len(rf.log)-1].INDEX
@@ -253,7 +245,6 @@ func (rf *Raft) GetLatestLogIndex() int {
 	return 0
 }
 
-// use this function with lock
 func (rf *Raft) GetLatestLogIndexIncludeSnapshot() int {
 	if rf.hasLog() {
 		return rf.log[len(rf.log)-1].INDEX
@@ -264,7 +255,6 @@ func (rf *Raft) GetLatestLogIndexIncludeSnapshot() int {
 	return 0
 }
 
-// use this function with lock
 func (rf *Raft) GetLatestLogTermIncludeSnapshot() int {
 	if rf.hasLog() {
 		return rf.log[len(rf.log)-1].TERM
@@ -275,21 +265,18 @@ func (rf *Raft) GetLatestLogTermIncludeSnapshot() int {
 	return 0
 }
 
-// use this function with lock
 func (rf *Raft) AppendLog(new_log *Log) bool {
 	rf.log = append(rf.log, *new_log)
 	rf.persist()
 	return true
 }
 
-// use this function with lock
 func (rf *Raft) AppendLogs(logs []Log) bool {
 	rf.log = append(rf.log, logs...)
 	rf.persist()
 	return true
 }
 
-// use this function with lock
 // remove all logs that index > last_log_index
 func (rf *Raft) RemoveLogIndexGreaterThan(last_log_index int) bool {
 	reserve_logs_number := 0
@@ -310,7 +297,6 @@ func (rf *Raft) RemoveLogIndexGreaterThan(last_log_index int) bool {
 	return true
 }
 
-// use this function with lock
 // remove all logs that index < last_log_index
 // is caller's job to call rf.persist
 func (rf *Raft) RemoveLogIndexLessThan(last_log_index int) bool {
@@ -325,13 +311,11 @@ func (rf *Raft) RemoveLogIndexLessThan(last_log_index int) bool {
 	return true
 }
 
-// use this function with lock
 func (rf *Raft) SetTerm(new_term int) {
 	rf.current_term = new_term
 	rf.persist()
 }
 
-// use this function with lock
 func (rf *Raft) SetVotefor(vote_for int) {
 	rf.voted_for = vote_for
 	rf.persist()
@@ -1350,7 +1334,6 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 	}
 }
 
-// use this function when hold lock
 func (rf *Raft) successAppend(server int, this_round_term int,
 	args *RequestAppendEntryArgs) {
 	dPrintln("successAppend for ", server, "  handle args : ", args)
@@ -1371,7 +1354,6 @@ func (rf *Raft) successAppend(server int, this_round_term int,
 	rf.recently_commit <- struct{}{}
 }
 
-// use this function when hold lock
 func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
 	initil_log_position := rf.LogLength() - 1
 	new_prev_log_position, ok := rf.GetPositionByIndex(args.PREV_LOG_INDEX - 1)
@@ -1444,7 +1426,6 @@ start_append_logs:
 	}
 }
 
-// use with the lock
 func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
 	args := &RequestAppendEntryArgs{
 		TERM:          rf.current_term,
@@ -1711,12 +1692,10 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-// use this function when hold the lock
 func (rf *Raft) statusIs(status int) bool {
 	return rf.status == status
 }
 
-// use this function when hold the lock
 func (rf *Raft) becomePreCandidate() {
 	rf.leader_id = None
 	rf.receive_from_leader = false
@@ -1725,7 +1704,6 @@ func (rf *Raft) becomePreCandidate() {
 	go rf.newPreVote(rf.current_term)
 }
 
-// use this function when hold the lock
 func (rf *Raft) becomeCandidate(new_term int) {
 	if new_term <= rf.current_term {
 		dPrintf("Server[%d] Error: becomeCandidate in same term", rf.me)
@@ -1739,7 +1717,6 @@ func (rf *Raft) becomeCandidate(new_term int) {
 	go rf.newVote(rf.current_term)
 }
 
-// use this function when hold the lock
 func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 	if new_leader == rf.me {
 		dPrintf("Server[%d] become follower by itself, impossble", rf.me)
@@ -1767,7 +1744,6 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 	rf.leader_id = new_leader
 }
 
-// use this function when hold the lock
 func (rf *Raft) becomeLeader() {
 	rf.status = LEADER
 	rf.next_index[rf.me] = rf.GetLatestLogIndexIncludeSnapshot() + 1
