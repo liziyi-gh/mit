@@ -650,17 +650,21 @@ func (rf *Raft) sendCommandToApplierFunction() {
 		rf.mu.Lock()
 		if new_command.CommandValid && new_command.CommandIndex > rf.commit_index {
 			dPrintf("Server[%d] going to commit index %d", rf.me, new_command.CommandIndex)
-			rf.commit_index = new_command.CommandIndex
 			rf.mu.Unlock()
 			rf.apply_ch <- new_command
+			rf.mu.Lock()
+			rf.commit_index = new_command.CommandIndex
+			rf.mu.Unlock()
 			dPrintf("Server[%d] committed index %d", rf.me, new_command.CommandIndex)
 			continue
 		}
 
 		if new_command.SnapshotValid {
-			rf.commit_index = new_command.SnapshotIndex
 			rf.mu.Unlock()
 			rf.apply_ch <- new_command
+			rf.mu.Lock()
+			rf.commit_index = new_command.SnapshotIndex
+			rf.mu.Unlock()
 			continue
 		}
 		rf.mu.Unlock()

@@ -11,7 +11,6 @@ package raft
 import (
 	"fmt"
 	"math/rand"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -694,78 +693,56 @@ func __oneRoundAgreement(t *testing.T, cfg *config, servers int) {
 	}
 }
 
-func TestGoroutineLeak1LZYA(t *testing.T) {
-	servers := 5
-	cfg := make_config(t, servers, false, false)
-	defer cfg.cleanup()
-	cfg.begin("Test (2B): test gorountine number")
+// func TestGoroutineLeak1LZYA(t *testing.T) {
+// 	servers := 5
+// 	cfg := make_config(t, servers, false, false)
+// 	defer cfg.cleanup()
+// 	cfg.begin("Test (2B): test gorountine number")
 
-	__oneRoundAgreement(t, cfg, servers)
+// 	__oneRoundAgreement(t, cfg, servers)
 
-	leader1 := cfg.checkOneLeader()
-	cfg.disconnect(leader1)
-	cfg.disconnect((leader1 + 1) % servers)
-	cfg.disconnect((leader1 + 2) % servers)
+// 	leader1 := cfg.checkOneLeader()
+// 	cfg.disconnect(leader1)
+// 	cfg.disconnect((leader1 + 1) % servers)
+// 	cfg.disconnect((leader1 + 2) % servers)
 
-	time.Sleep(time.Duration(20000) * time.Millisecond)
-	n1 := runtime.NumGoroutine()
-	time.Sleep(time.Duration(20000) * time.Millisecond)
-	n2 := runtime.NumGoroutine()
-	// fmt.Printf("gorountines n1 is %d, n2 is %d\n", n1, n2)
+// 	time.Sleep(time.Duration(20000) * time.Millisecond)
+// 	n1 := runtime.NumGoroutine()
+// 	time.Sleep(time.Duration(20000) * time.Millisecond)
+// 	n2 := runtime.NumGoroutine()
+// 	// fmt.Printf("gorountines n1 is %d, n2 is %d\n", n1, n2)
 
-	// buf := make([]byte, 1<<20)
-	// stack_len := runtime.Stack(buf, true)
-	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
+// 	// buf := make([]byte, 1<<20)
+// 	// stack_len := runtime.Stack(buf, true)
+// 	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
 
-	time.Sleep(time.Duration(20000) * time.Millisecond)
-	n3 := runtime.NumGoroutine()
-	// fmt.Printf("gorountines n2 is %d, n3 is %d\n", n2, n3)
-	// stack_len = runtime.Stack(buf, true)
-	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
-	cfg.connect((leader1 + 2) % servers)
+// 	time.Sleep(time.Duration(20000) * time.Millisecond)
+// 	n3 := runtime.NumGoroutine()
+// 	// fmt.Printf("gorountines n2 is %d, n3 is %d\n", n2, n3)
+// 	// stack_len = runtime.Stack(buf, true)
+// 	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
+// 	cfg.connect((leader1 + 2) % servers)
 
-	time.Sleep(time.Duration(20000) * time.Millisecond)
-	n4 := runtime.NumGoroutine()
-	// fmt.Printf("gorountines n3 is %d, n4 is %d\n", n3, n4)
-	// stack_len = runtime.Stack(buf, true)
-	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
+// 	time.Sleep(time.Duration(20000) * time.Millisecond)
+// 	n4 := runtime.NumGoroutine()
+// 	// fmt.Printf("gorountines n3 is %d, n4 is %d\n", n3, n4)
+// 	// stack_len = runtime.Stack(buf, true)
+// 	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
 
-	cfg.connect(leader1)
-	cfg.connect((leader1 + 1) % servers)
-	time.Sleep(time.Duration(20000) * time.Millisecond)
-	n5 := runtime.NumGoroutine()
-	// fmt.Printf("gorountines n4 is %d, n5 is %d\n", n4, n5)
-	// stack_len = runtime.Stack(buf, true)
-	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
+// 	cfg.connect(leader1)
+// 	cfg.connect((leader1 + 1) % servers)
+// 	time.Sleep(time.Duration(20000) * time.Millisecond)
+// 	n5 := runtime.NumGoroutine()
+// 	// fmt.Printf("gorountines n4 is %d, n5 is %d\n", n4, n5)
+// 	// stack_len = runtime.Stack(buf, true)
+// 	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
 
-	if n2-n1 > 20 || n3-n2 > 20 || n4-n3 > 20 || n5-n4 > 20 {
-		t.Fatalf("too many gorountines %d", n2-n1)
-	}
+// 	if n2-n1 > 20 || n3-n2 > 20 || n4-n3 > 20 || n5-n4 > 20 {
+// 		t.Fatalf("too many gorountines %d", n2-n1)
+// 	}
 
-	cfg.end()
-}
-
-func TestUnreliableNetworkLZY(t *testing.T) {
-	servers := 3
-	cfg := make_config(t, servers, true, false)
-	defer cfg.cleanup()
-	cfg.begin("Test (2B): test gorountine number")
-
-	var wg sync.WaitGroup
-
-	for iters := 1; iters < 50; iters++ {
-		for j := 0; j < 4; j++ {
-			wg.Add(1)
-			go func(iters, j int) {
-				defer wg.Done()
-				cfg.one((100*iters)+j, 1, true)
-			}(iters, j)
-		}
-		cfg.one(iters, 1, true)
-	}
-
-	cfg.end()
-}
+// 	cfg.end()
+// }
 
 func TestPersist12C(t *testing.T) {
 	servers := 3

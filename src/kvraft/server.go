@@ -283,13 +283,18 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	if command.CommandIndex < kv.applyed_index {
+		DPrintf("Server[%v] try to apply old command", kv.me)
+		return
+	}
 
 	op := command.Command.(Op)
 	DPrintln("[applier] op is", op)
 
 	if kv.checkTransactionDone(op.Client_id, op.Trans_id) {
 		DPrintln("Server ", kv.me, "alreay done", op.Request_id)
-		kv.mu.Unlock()
 		return
 	}
 
@@ -327,8 +332,6 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 	DPrintln("[Server]", kv.me,
 		"[applier] success apply",
 		op.Request_id, "raft index", command.CommandIndex)
-
-	kv.mu.Unlock()
 }
 
 func (kv *KVServer) readSnapshot(snapshot_data []byte) {
@@ -354,9 +357,13 @@ func (kv *KVServer) readSnapshot(snapshot_data []byte) {
 
 func (kv *KVServer) applySnapshot(command raft.ApplyMsg) {
 	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if command.SnapshotIndex < kv.applyed_index {
+		DPrintf("Server[%v] try to apply old snapshot", kv.me)
+		return
+	}
 	DPrintf("Server[%v] applySnapshot", kv.me)
 	kv.readSnapshot(command.Snapshot)
-	kv.mu.Unlock()
 }
 
 func (kv *KVServer) applier() {
@@ -384,6 +391,7 @@ func (kv *KVServer) applier() {
 			data := w.Bytes()
 			kv.rf.Snapshot(kv.applyed_index, data)
 			kv.mu.Unlock()
+			DPrintf("Server[%d] [applier] create snapshot", kv.me)
 		}
 	}
 }
