@@ -21,6 +21,8 @@ func (kv *KVServer) setNotifier(request_id uint64, notify *applyNotify) {
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
+		dt := time.Now()
+		fmt.Print(dt.Format("2006-01-19 03:04:05.000000"), " ")
 		fmt.Printf(format, a...)
 		fmt.Print("\n")
 	}
@@ -29,6 +31,8 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 
 func DPrintln(a ...interface{}) (n int, err error) {
 	if Debug {
+		dt := time.Now()
+		fmt.Print(dt.Format("2006-01-19 03:04:05.000000"), " ")
 		fmt.Println(a...)
 	}
 	return
