@@ -751,6 +751,7 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 
 	// prev log match
 	if matched {
+		dPrintf("Server[%v] sliceLog matched", rf.me)
 		for j := len(args.ENTRIES) - 1; j >= 0; j-- {
 			if iter_self_log_position >= rf.LogLength() {
 				return append_logs, true
@@ -773,6 +774,7 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 
 	// prev log dismatched
 	if !matched {
+		dPrintf("Server[%v] sliceLog dismatched", rf.me)
 		if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
 			rf.removeLogIndexGreaterThan(0)
 			return append_logs, true
@@ -802,6 +804,7 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 
 	if rf.hasLog() {
 		append_logs, ok = rf.sliceLogToAlign(args)
+		dPrintf("Server[%v] sliceLogToAlign %v", rf.me, ok)
 		if !ok {
 			rf.buildReplyForAppendEntryFailed(args, reply)
 			return
@@ -835,6 +838,8 @@ start_append_logs:
 		append_logs[i], append_logs[j] = append_logs[j], append_logs[i]
 	}
 
+	dPrintf("Server[%v] append logs %v", rf.me, append_logs)
+
 	rf.appendLogs(append_logs)
 	if len(append_logs) > 0 {
 		dPrintf("Server[%v] new log is %v", rf.me, rf.log)
@@ -861,6 +866,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	}
 
 	if len(args.ENTRIES) == 0 {
+		dPrintf("Server[%d] got heartbeat from %v", rf.me, args.LEADER_ID)
 		matched, _ := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
 		prev_log_same_as_snapshot := args.PREV_LOG_TERM == rf.last_log_term_in_snapshot &&
 			args.PREV_LOG_INDEX == rf.last_log_index_in_snapshot
