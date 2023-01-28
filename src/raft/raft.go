@@ -820,7 +820,7 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 		prev_log_is_snapshot_log := args.PREV_LOG_INDEX == rf.last_log_index_in_snapshot && args.PREV_LOG_TERM == rf.last_log_term_in_snapshot
 		is_first_log := args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0
 		if !is_first_log && !prev_log_is_snapshot_log {
-			dPrintln("server", rf.me, "append empty failed")
+			dPrintf("Server[%v] append empty failed", rf.me)
 			rf.buildReplyForAppendEntryFailed(args, reply)
 			return
 		}
@@ -837,7 +837,7 @@ start_append_logs:
 
 	rf.appendLogs(append_logs)
 	if len(append_logs) > 0 {
-		dPrintln("Server[", rf.me, "] new log is:", rf.log)
+		dPrintf("Server[%v] new log is %v", rf.me, rf.log)
 	}
 
 	return
