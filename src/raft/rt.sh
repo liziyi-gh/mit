@@ -17,13 +17,13 @@ do
     # go test -run 2B > ${TESTER_LOG_FILE}
     # go test -run 2C > ${TESTER_LOG_FILE}
     # go test -run 2D > ${TESTER_LOG_FILE}
-    go test > ${TESTER_LOG_FILE}
+    # go test > ${TESTER_LOG_FILE}
     # go test -run TestBasicAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestFailAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestRPCBytes2B -race > ${TESTER_LOG_FILE}
     # go test -run TestFailNoAgree2B -race > ${TESTER_LOG_FILE}
     # go test -run TestRejoin2B -race > ${TESTER_LOG_FILE}
-    # go test -run TestConcurrentStarts2B -race > ${TESTER_LOG_FILE}
+    go test -run TestConcurrentStarts2B -race > ${TESTER_LOG_FILE}
     # go test -run TestCount2B -race > ${TESTER_LOG_FILE}
     # go test -run TestBackup2B -race > ${TESTER_LOG_FILE}
     # go test -run TestFigure82C -race > ${TESTER_LOG_FILE}
