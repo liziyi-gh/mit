@@ -1325,7 +1325,7 @@ func (rf *Raft) successAppend(server int, this_round_term int,
 		}
 		new_next_index := newest_index_in_args + 1
 		if new_next_index > rf.next_index[server] {
-			dPrintln("leader update next index for Server[", server, "] , new next index is ", new_next_index)
+			dPrintf("leader update next index for Server[%v], new next index is %v", server, new_next_index)
 			rf.next_index[server] = new_next_index
 		}
 	}
