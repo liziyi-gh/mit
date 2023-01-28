@@ -436,7 +436,7 @@ func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 		return
 	}
 	if index > rf.commit_index_in_quorom || index > rf.commit_index {
-		dPrintln("Server[", rf.me, "] give up Snapshot, some log not commit")
+		dPrintf("Server[%v] give up Snapshot, some log not commit", rf.me)
 		go func() {
 			duration := 100
 			time.Sleep(time.Duration(duration) * time.Millisecond)
@@ -794,8 +794,8 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 }
 
 func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
-	dPrintln("Server[", rf.me, "] have log", rf.log)
-	dPrintln("Server[", rf.me, "] got append log args:", args)
+	dPrintf("Server[%v] have log %v", rf.me, rf.log)
+	dPrintf("Server[%v] got append log args %v:", rf.me, args)
 
 	append_logs := args.ENTRIES
 	ok := false
