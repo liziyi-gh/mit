@@ -230,21 +230,21 @@ func (rf *Raft) hasLog() bool {
 	return rf.LogLength() >= 1
 }
 
-func (rf *Raft) GetLatestLogRef() *Log {
+func (rf *Raft) getLatestLogRef() *Log {
 	if rf.hasLog() {
 		return &rf.log[len(rf.log)-1]
 	}
 	return nil
 }
 
-func (rf *Raft) GetLatestLogIndex() int {
+func (rf *Raft) getLatestLogIndex() int {
 	if rf.hasLog() {
 		return rf.log[len(rf.log)-1].INDEX
 	}
 	return 0
 }
 
-func (rf *Raft) GetLatestLogIndexIncludeSnapshot() int {
+func (rf *Raft) getLatestLogIndexIncludeSnapshot() int {
 	if rf.hasLog() {
 		return rf.log[len(rf.log)-1].INDEX
 	}
@@ -254,7 +254,7 @@ func (rf *Raft) GetLatestLogIndexIncludeSnapshot() int {
 	return 0
 }
 
-func (rf *Raft) GetLatestLogTermIncludeSnapshot() int {
+func (rf *Raft) getLatestLogTermIncludeSnapshot() int {
 	if rf.hasLog() {
 		return rf.log[len(rf.log)-1].TERM
 	}
@@ -264,20 +264,14 @@ func (rf *Raft) GetLatestLogTermIncludeSnapshot() int {
 	return 0
 }
 
-func (rf *Raft) AppendLog(new_log *Log) bool {
-	rf.log = append(rf.log, *new_log)
-	rf.persist()
-	return true
-}
-
-func (rf *Raft) AppendLogs(logs []Log) bool {
+func (rf *Raft) appendLogs(logs []Log) bool {
 	rf.log = append(rf.log, logs...)
 	rf.persist()
 	return true
 }
 
 // remove all logs that index > last_log_index
-func (rf *Raft) RemoveLogIndexGreaterThan(last_log_index int) bool {
+func (rf *Raft) removeLogIndexGreaterThan(last_log_index int) bool {
 	reserve_logs_number := 0
 	for i := 0; i < rf.LogLength(); i++ {
 		if rf.log[i].INDEX == last_log_index {
@@ -298,7 +292,7 @@ func (rf *Raft) RemoveLogIndexGreaterThan(last_log_index int) bool {
 
 // remove all logs that index < last_log_index
 // is caller's job to call rf.persist
-func (rf *Raft) RemoveLogIndexLessThan(last_log_index int) bool {
+func (rf *Raft) removeLogIndexLessThan(last_log_index int) bool {
 	reserve_logs_position := rf.LogLength()
 	for i := 0; i < rf.LogLength(); i++ {
 		if rf.log[i].INDEX == last_log_index {
@@ -310,12 +304,12 @@ func (rf *Raft) RemoveLogIndexLessThan(last_log_index int) bool {
 	return true
 }
 
-func (rf *Raft) SetTerm(new_term int) {
+func (rf *Raft) setTerm(new_term int) {
 	rf.current_term = new_term
 	rf.persist()
 }
 
-func (rf *Raft) SetVotefor(vote_for int) {
+func (rf *Raft) setVotefor(vote_for int) {
 	rf.voted_for = vote_for
 	rf.persist()
 }
@@ -453,7 +447,7 @@ func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 	rf.snapshot_data = snapshot
 	rf.last_log_index_in_snapshot = index
 	rf.last_log_term_in_snapshot = rf.GetLogTermByIndex(index)
-	rf.RemoveLogIndexLessThan(index + 1)
+	rf.removeLogIndexLessThan(index + 1)
 	rf.persist()
 }
 
@@ -568,7 +562,7 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 		}
 
 		lowest_commit_index := findTopK(rf.next_index, rf.quorum_number) - 1
-		if lowest_commit_index <= 0 || lowest_commit_index > rf.GetLatestLogIndexIncludeSnapshot() {
+		if lowest_commit_index <= 0 || lowest_commit_index > rf.getLatestLogIndexIncludeSnapshot() {
 			rf.mu.Unlock()
 			continue
 		}
@@ -593,7 +587,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		return
 	}
 
-	for idx := rf.commit_index + 1; idx <= new_commit_index && idx <= rf.GetLatestLogIndex(); idx++ {
+	for idx := rf.commit_index + 1; idx <= new_commit_index && idx <= rf.getLatestLogIndex(); idx++ {
 		command, ok := rf.GetLogCommandByIndex(idx)
 		if !ok {
 			return
@@ -654,8 +648,8 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		argi.TERM = rf.current_term
 		argi.LEADER_ID = rf.me
 		argi.LEADER_COMMIT = rf.commit_index
-		argi.PREV_LOG_INDEX = rf.GetLatestLogIndexIncludeSnapshot()
-		argi.PREV_LOG_TERM = rf.GetLatestLogTermIncludeSnapshot()
+		argi.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
+		argi.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
 		go rf.sendOneAppendEntry(i, argi, &reply[i])
 	}
 }
@@ -687,8 +681,8 @@ func (rf *Raft) handleOneServerHeartbeat(server int, this_round_term int) {
 			args.TERM = rf.current_term
 			args.LEADER_ID = rf.me
 			args.LEADER_COMMIT = rf.commit_index
-			args.PREV_LOG_INDEX = rf.GetLatestLogIndexIncludeSnapshot()
-			args.PREV_LOG_TERM = rf.GetLatestLogTermIncludeSnapshot()
+			args.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
+			args.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
 			rf.mu.Unlock()
 			rf.sendOneAppendEntry(server, args, reply)
 			ch <- struct{}{}
@@ -713,7 +707,7 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 	}
 
 	dPrintf("Server[%d] install snapshot from [%d]", rf.me, args.LEADER_ID)
-	rf.RemoveLogIndexGreaterThan(0)
+	rf.removeLogIndexGreaterThan(0)
 	rf.last_log_term_in_snapshot = args.LAST_INCLUDED_TERM
 	rf.last_log_index_in_snapshot = args.LAST_INCLUDED_INDEX
 	rf.snapshot_data = args.DATA
@@ -767,7 +761,7 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 			not_same_index := iter_args_log.INDEX != iter_self_log_idx
 			dismatch := not_same_term || not_same_index
 			if dismatch {
-				rf.RemoveLogIndexGreaterThan(iter_self_log_idx - 1)
+				rf.removeLogIndexGreaterThan(iter_self_log_idx - 1)
 				return append_logs, true
 			}
 			iter_self_log_position++
@@ -780,16 +774,16 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 	// prev log dismatched
 	if !matched {
 		if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
-			rf.RemoveLogIndexGreaterThan(0)
+			rf.removeLogIndexGreaterThan(0)
 			return append_logs, true
 		}
 		has_snapshot_log, snapshot_position := rf.hasSnapshotLog(append_logs)
 		if has_snapshot_log {
-			rf.RemoveLogIndexGreaterThan(rf.last_log_index_in_snapshot)
+			rf.removeLogIndexGreaterThan(rf.last_log_index_in_snapshot)
 			append_logs = append_logs[:snapshot_position]
 			return append_logs, true
 		} else if args.PREV_LOG_INDEX == rf.last_log_index_in_snapshot && args.PREV_LOG_TERM == rf.last_log_term_in_snapshot {
-			rf.RemoveLogIndexGreaterThan(rf.last_log_index_in_snapshot)
+			rf.removeLogIndexGreaterThan(rf.last_log_index_in_snapshot)
 			return append_logs, true
 		} else {
 			dPrintf("Server[%d] Append Entry failed because PREV_LOG_INDEX %d not matched", rf.me, args.PREV_LOG_INDEX)
@@ -819,7 +813,7 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 	if len(append_logs) > 0 && !rf.hasLog() {
 		has_snapshot_log, snapshot_position := rf.hasSnapshotLog(append_logs)
 		if has_snapshot_log {
-			rf.RemoveLogIndexGreaterThan(rf.last_log_index_in_snapshot)
+			rf.removeLogIndexGreaterThan(rf.last_log_index_in_snapshot)
 			append_logs = append_logs[:snapshot_position]
 			goto start_append_logs
 		}
@@ -841,7 +835,7 @@ start_append_logs:
 		append_logs[i], append_logs[j] = append_logs[j], append_logs[i]
 	}
 
-	rf.AppendLogs(append_logs)
+	rf.appendLogs(append_logs)
 	if len(append_logs) > 0 {
 		dPrintln("Server[", rf.me, "] new log is:", rf.log)
 	}
@@ -905,7 +899,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// I have newer log
 	if rf.hasLog() {
-		my_latest_log := rf.GetLatestLogRef()
+		my_latest_log := rf.getLatestLogRef()
 
 		if my_latest_log.TERM > args.PREV_LOG_TERM {
 			dPrintf("Server[%d] reject pre vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
@@ -961,8 +955,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// NOTE: it would not cause mutilply leaders?
 		// update: of course not! 1 term, 1 server, 1 ticket, fair enough.
 		rf.status = FOLLOWER
-		rf.SetTerm(args.TERM)
-		rf.SetVotefor(None)
+		rf.setTerm(args.TERM)
+		rf.setVotefor(None)
 	}
 
 	// I have voted for other server
@@ -974,7 +968,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// I have newer log
 	if rf.hasLog() {
-		my_latest_log := rf.GetLatestLogRef()
+		my_latest_log := rf.getLatestLogRef()
 
 		if my_latest_log.TERM > args.PREV_LOG_TERM {
 			dPrintf("Server[%d] reject vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
@@ -1001,8 +995,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// I can voted candidate now
 	dPrintf("Server[%d] vote for Server[%d], at term %d", rf.me, args.CANDIDATE_ID, rf.current_term)
 	reply.VOTE_GRANTED = true
-	rf.SetTerm(args.TERM)
-	rf.SetVotefor(args.CANDIDATE_ID)
+	rf.setTerm(args.TERM)
+	rf.setVotefor(args.CANDIDATE_ID)
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -1051,8 +1045,8 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 	args.TERM = this_round_term
 	args.CANDIDATE_ID = rf.me
 	if rf.hasLog() || rf.hasSnapshot() {
-		args.PREV_LOG_INDEX = rf.GetLatestLogIndexIncludeSnapshot()
-		args.PREV_LOG_TERM = rf.GetLatestLogTermIncludeSnapshot()
+		args.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
+		args.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
 	} else {
 		args.PREV_LOG_TERM = -1
 		args.PREV_LOG_INDEX = -1
@@ -1105,8 +1099,8 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 	args.CANDIDATE_ID = rf.me
 
 	if rf.hasLog() || rf.hasSnapshot() {
-		args.PREV_LOG_INDEX = rf.GetLatestLogIndexIncludeSnapshot()
-		args.PREV_LOG_TERM = rf.GetLatestLogTermIncludeSnapshot()
+		args.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
+		args.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
 	} else {
 		args.PREV_LOG_TERM = -1
 		args.PREV_LOG_INDEX = -1
@@ -1420,7 +1414,7 @@ func (rf *Raft) buildNewestArgs() *RequestAppendEntryArgs {
 	if !rf.hasLog() {
 		return args
 	} else {
-		latest_log := *rf.GetLatestLogRef()
+		latest_log := *rf.getLatestLogRef()
 		append_logs := []Log{latest_log}
 		prev_log_index := latest_log.INDEX - 1
 		prev_log_term := 0
@@ -1639,14 +1633,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	term = rf.current_term
 	isLeader = true
-	new_log_index = rf.GetLatestLogIndexIncludeSnapshot() + 1
+	new_log_index = rf.getLatestLogIndexIncludeSnapshot() + 1
 	rf.next_index[rf.me] = new_log_index + 1
-	new_log := &Log{
-		INDEX:   new_log_index,
-		TERM:    rf.current_term,
-		COMMAND: command,
+	new_log := []Log{
+		{
+			INDEX:   new_log_index,
+			TERM:    rf.current_term,
+			COMMAND: command,
+		},
 	}
-	rf.AppendLog(new_log)
+	rf.appendLogs(new_log)
 	go rf.newRoundAppend(command, new_log_index)
 
 	dPrintf("Server[%v] Start accept new log: %v", rf.me, new_log)
@@ -1694,8 +1690,8 @@ func (rf *Raft) becomeCandidate(new_term int) {
 		return
 	}
 	// NOTE: always update term then update voted for
-	rf.SetTerm(new_term)
-	rf.SetVotefor(None)
+	rf.setTerm(new_term)
+	rf.setVotefor(None)
 	rf.status = CANDIDATE
 	dPrintf("Server[%d] become candidate at term %d", rf.me, new_term)
 	go rf.newVote(rf.current_term)
@@ -1713,10 +1709,10 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 
 	prev_term := rf.current_term
 
-	rf.SetTerm(new_term)
+	rf.setTerm(new_term)
 
 	if prev_term < new_term {
-		rf.SetVotefor(None)
+		rf.setVotefor(None)
 	}
 
 	if new_leader != -1 {
@@ -1730,7 +1726,7 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 
 func (rf *Raft) becomeLeader() {
 	rf.status = LEADER
-	rf.next_index[rf.me] = rf.GetLatestLogIndexIncludeSnapshot() + 1
+	rf.next_index[rf.me] = rf.getLatestLogIndexIncludeSnapshot() + 1
 
 	// NOTE: send heartbeat ASAP
 	rf.sendOneRoundHeartBeat()
