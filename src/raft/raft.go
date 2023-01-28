@@ -34,6 +34,14 @@ import (
 )
 
 const Raft_debug = true
+const LOGPATH = "/tmp/tmp-fs/raft.log"
+const (
+	FOLLOWER = iota
+	PRECANDIDATE
+	CANDIDATE
+	LEADER
+)
+const None = -1
 
 func dPrintf(format string, a ...interface{}) {
 	if Raft_debug {
@@ -78,15 +86,6 @@ type Log struct {
 func (self *Log) IsSameLog(index int, term int) bool {
 	return self.INDEX == index && self.TERM == term
 }
-
-const (
-	FOLLOWER = iota
-	PRECANDIDATE
-	CANDIDATE
-	LEADER
-)
-
-const None = -1
 
 func findLogMatchedIndex(logs []Log, term int, index int) (bool, int) {
 	for i := len(logs) - 1; i >= 0; i-- {
@@ -547,18 +546,6 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 		rf.mu.Unlock()
 
 		ok = rf.sendAppendEntry(server, args, reply)
-		rf.mu.Lock()
-		if ok {
-			if reply.TERM > rf.current_term {
-				rf.becomeFollower(reply.TERM, None)
-			}
-
-			// maybe response lost, so need send signal
-			if reply.SUCCESS {
-				rf.successAppend(server, args.TERM, args)
-			}
-		}
-		rf.mu.Unlock()
 		failed_times++
 		time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
 	}
@@ -625,10 +612,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 }
 
 func (rf *Raft) sendCommandToApplierFunction() {
-	for {
-		if rf.killed() {
-			return
-		}
+	for !rf.killed() {
 		new_command := <-rf.internal_apply_chan
 		dPrintf("Server[%d] get new command index %d", rf.me, new_command.CommandIndex)
 		rf.mu.Lock()
@@ -1643,7 +1627,7 @@ func (rf *Raft) newRoundAppend(command interface{}, index int) {
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	new_log_index := None
 	term := None
-	isLeader := true
+	isLeader := false
 
 	// Your code here (2B).
 	rf.mu.Lock()
@@ -1651,7 +1635,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	// is not leader
 	if !rf.statusIs(LEADER) {
-		return new_log_index, term, false
+		return new_log_index, term, isLeader
 	}
 	term = rf.current_term
 	isLeader = true
@@ -1780,18 +1764,12 @@ func (rf *Raft) becomeLeader() {
 // The Ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
-	for rf.killed() == false {
-
+	for !rf.killed() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
 
-		if rf.killed() {
-			return
-		}
-
 		duration := rand.Intn(rf.timeout_rand_ms) + rf.timeout_const_ms
-
 		time.Sleep(time.Duration(duration) * time.Millisecond)
 
 		rf.mu.Lock()
@@ -1816,6 +1794,7 @@ func (rf *Raft) ticker() {
 			} else {
 				rf.becomeCandidate(rf.current_term + 1)
 			}
+
 		case PRECANDIDATE:
 			rf.becomePreCandidate()
 			dPrintf("Server[%d] did not finish pre vote in time, become follower", rf.me)
@@ -1834,7 +1813,7 @@ func (rf *Raft) ticker() {
 }
 
 func initLogSetting(me int) {
-	file, err := os.OpenFile("/tmp/tmp-fs/raft.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
+	file, err := os.OpenFile(LOGPATH, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -1876,7 +1855,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.next_index = make([]int, rf.all_server_number)
 	// FIXME: this is an arbitray number
 	rf.chanel_buffer_size = 100000
-
 	rf.recently_commit = make(chan struct{}, rf.chanel_buffer_size)
 	rf.internal_apply_chan = make(chan ApplyMsg, rf.chanel_buffer_size)
 	rf.append_entry_chan = make([]chan struct{}, rf.all_server_number)
