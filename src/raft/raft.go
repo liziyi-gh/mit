@@ -1052,7 +1052,7 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 	}
 	rf.mu.Unlock()
 
-	for failed_times := 0; failed_times < rf.rpc_retry_times && ! rf.killed(); failed_times++ {
+	for failed_times := 0; failed_times < rf.rpc_retry_times && !rf.killed(); failed_times++ {
 		rf.mu.Lock()
 		if rf.current_term != this_round_term {
 			rf.mu.Unlock()
@@ -1105,7 +1105,7 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 
 	failed_times := 0
 
-	for !rf.killed(){
+	for !rf.killed() {
 		ok := false
 
 		if failed_times > rf.rpc_retry_times {
@@ -1163,11 +1163,7 @@ func (rf *Raft) newVote(this_round_term int) {
 
 	timeout_ms := 1000 * 30
 
-	for {
-		if rf.killed() {
-			return
-		}
-
+	for !rf.killed() {
 		select {
 		case vote_reply := <-reply:
 			dPrintf("Server[%d] got vote reply at term %d, granted is %t", rf.me, this_round_term, vote_reply.VOTE_GRANTED)
@@ -1218,11 +1214,11 @@ func (rf *Raft) newVote(this_round_term int) {
 	}
 }
 
-func (rf *Raft) newPreVote(this_round_term int) bool {
+func (rf *Raft) newPreVote(this_round_term int) {
 	rf.mu.Lock()
 	if this_round_term != rf.current_term {
 		rf.mu.Unlock()
-		return false
+		return
 	}
 	rf.mu.Unlock()
 
@@ -1237,11 +1233,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 
 	timeout_ms := 1000 * 30
 
-	for {
-		if rf.killed() {
-			return false
-		}
-
+	for !rf.killed() {
 		select {
 		case pre_vote_reply := <-reply:
 			got_reply++
@@ -1250,7 +1242,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 			if pre_vote_reply.TERM > rf.current_term {
 				rf.becomeFollower(pre_vote_reply.TERM, None)
 				rf.mu.Unlock()
-				return false
+				return
 			}
 
 			// term is new term
@@ -1258,14 +1250,14 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 				rf.status = FOLLOWER
 				rf.mu.Unlock()
 				dPrintf("Server[%d] quit pre vote, not term %d anymore", rf.me, this_round_term)
-				return false
+				return
 			}
 
 			// current status is not pre-candidate anymore
 			if rf.status != PRECANDIDATE {
 				rf.mu.Unlock()
 				dPrintf("Server[%d] quit pre vote, not PRECANDIDATE anymore", rf.me)
-				return false
+				return
 			}
 
 			if !pre_vote_reply.VOTE_GRANTED {
@@ -1282,7 +1274,7 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 					rf.status = FOLLOWER
 					rf.mu.Unlock()
 					dPrintf("Server[%d] lost the pre vote", rf.me)
-					return false
+					return
 				}
 				rf.mu.Unlock()
 				continue
@@ -1295,11 +1287,11 @@ func (rf *Raft) newPreVote(this_round_term int) bool {
 			this_round_term = rf.current_term
 			rf.mu.Unlock()
 
-			return true
+			return
 
 		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
 			dPrintf("Server[%d] did not finish prevote in time", rf.me)
-			return false
+			return
 		}
 	}
 }
