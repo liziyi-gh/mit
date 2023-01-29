@@ -1489,13 +1489,10 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 	rf.mu.Unlock()
 
 	// TODO: refactor, extract as a function
-	for {
+	for !rf.killed() {
 		reply := &RequestAppendEntryReply{}
 		ok := rf.sendOneAppendEntry(server, args, reply)
 		rf.mu.Lock()
-		if rf.killed() {
-			goto release_lock_and_return
-		}
 		if !ok {
 			goto release_lock_and_return
 		}
