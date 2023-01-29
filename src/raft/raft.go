@@ -749,6 +749,11 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 	matched_log_position, _ := rf.GetPositionByIndex(matched_log_index)
 	iter_self_log_position := matched_log_position + 1
 
+	if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
+		matched = true
+		iter_self_log_position = 0
+	}
+
 	// prev log match
 	if matched {
 		dPrintf("Server[%v] sliceLog matched", rf.me)
@@ -775,10 +780,6 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 	// prev log dismatched
 	if !matched {
 		dPrintf("Server[%v] sliceLog dismatched", rf.me)
-		if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
-			rf.removeLogIndexGreaterThan(0)
-			return append_logs, true
-		}
 		has_snapshot_log, snapshot_position := rf.hasSnapshotLog(append_logs)
 		if has_snapshot_log {
 			rf.removeLogIndexGreaterThan(rf.last_log_index_in_snapshot)
