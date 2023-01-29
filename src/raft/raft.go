@@ -758,9 +758,9 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 			}
 			iter_args_log := &args.ENTRIES[j]
 			iter_self_log_idx := rf.GetIndexByPosition(iter_self_log_position)
-			not_same_term := iter_args_log.TERM != rf.GetLogTermByIndex(iter_self_log_idx)
-			not_same_index := iter_args_log.INDEX != iter_self_log_idx
-			dismatch := not_same_term || not_same_index
+			is_same_term := iter_args_log.TERM == rf.GetLogTermByIndex(iter_self_log_idx)
+			is_same_index := iter_args_log.INDEX == iter_self_log_idx
+			dismatch := !(is_same_term && is_same_index)
 			if dismatch {
 				rf.removeLogIndexGreaterThan(iter_self_log_idx - 1)
 				return append_logs, true
