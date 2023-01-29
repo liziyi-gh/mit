@@ -548,11 +548,7 @@ func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, rep
 }
 
 func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
-	for {
-		if rf.killed() {
-			return
-		}
-
+	for !rf.killed() {
 		<-rf.recently_commit
 
 		rf.mu.Lock()
@@ -1540,6 +1536,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		}
 		// lock has been release here, no code below
 	}
+	return
 
 release_lock_and_return:
 	rf.mu.Unlock()
