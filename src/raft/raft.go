@@ -655,17 +655,14 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 }
 
 func (rf *Raft) handleOneServerHeartbeat(server int, this_round_term int) {
-	// TODO: how many wokers should heartbeat have?
+	// TODO: how many workers should heartbeat have?
 	// FIXME: this is an arbitray number
 	worker_number := 100
 	ch := make(chan struct{}, worker_number)
 	for i := 0; i < worker_number; i++ {
 		ch <- struct{}{}
 	}
-	for {
-		if rf.killed() {
-			return
-		}
+	for !rf.killed() {
 		time.Sleep(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond)
 		rf.mu.Lock()
 		if rf.current_term != this_round_term {
