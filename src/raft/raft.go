@@ -1557,11 +1557,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 		ch <- struct{}{}
 	}
 
-	for {
-		if rf.killed() {
-			return
-		}
-
+	for !rf.killed() {
 		rf.mu.Lock()
 		if rf.current_term != this_round_term {
 			rf.mu.Unlock()
@@ -1752,7 +1748,7 @@ func (rf *Raft) ticker() {
 		rf.mu.Lock()
 
 		// if I am leader
-		if rf.status == LEADER {
+		if rf.statusIs(LEADER) {
 			rf.mu.Unlock()
 			continue
 		}
