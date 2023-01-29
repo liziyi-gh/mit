@@ -866,14 +866,12 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		prev_log_same_as_snapshot := args.PREV_LOG_TERM == rf.last_log_term_in_snapshot &&
 			args.PREV_LOG_INDEX == rf.last_log_index_in_snapshot
 		matched = matched || prev_log_same_as_snapshot
+		// prevent heartbeat commit some logs that should not commit
 		if !matched {
 			return
 		}
-		// prevent heartbeat commit some logs that should not commit
-		if rf.hasLog() {
-			if matched && args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
-				rf.updateCommitIndex(args.PREV_LOG_INDEX)
-			}
+		if rf.hasLog() && args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
+			rf.updateCommitIndex(args.PREV_LOG_INDEX)
 		}
 		reply.SUCCESS = true
 		return
@@ -1054,11 +1052,7 @@ func (rf *Raft) requestOneServerVote(index int, ans chan RequestVoteReply, this_
 	}
 	rf.mu.Unlock()
 
-	for failed_times := 0; failed_times < rf.rpc_retry_times; failed_times++ {
-		if rf.killed() {
-			return
-		}
-
+	for failed_times := 0; failed_times < rf.rpc_retry_times && ! rf.killed(); failed_times++ {
 		rf.mu.Lock()
 		if rf.current_term != this_round_term {
 			rf.mu.Unlock()
@@ -1111,10 +1105,7 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan RequestVoteReply, th
 
 	failed_times := 0
 
-	for {
-		if rf.killed() {
-			return
-		}
+	for !rf.killed(){
 		ok := false
 
 		if failed_times > rf.rpc_retry_times {
