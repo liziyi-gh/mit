@@ -742,7 +742,9 @@ func (rf *Raft) sliceLogToAlign(args *RequestAppendEntryArgs) ([]Log, bool) {
 	matched_log_position, _ := rf.GetPositionByIndex(matched_log_index)
 	iter_self_log_position := matched_log_position + 1
 
-	if args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0 {
+	if (args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0) ||
+		(args.PREV_LOG_INDEX == rf.last_log_index_in_snapshot &&
+			args.PREV_LOG_TERM == rf.last_log_term_in_snapshot) {
 		matched = true
 		iter_self_log_position = 0
 	}
