@@ -557,15 +557,12 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 			return
 		}
 
-		lowest_commit_index := findTopK(rf.next_index, rf.quorum_number) - 1
-		if lowest_commit_index <= 0 || lowest_commit_index > rf.getLatestLogIndexIncludeSnapshot() {
-			rf.mu.Unlock()
-			continue
-		}
-
 		// NOTE: prevent counting number to commit previous term's log
+		lowest_commit_index := findTopK(rf.next_index, rf.quorum_number) - 1
 		lowest_commit_term := rf.GetLogTermByIndex(lowest_commit_index)
-		if lowest_commit_term != current_term {
+		if lowest_commit_index <= 0 ||
+			lowest_commit_index > rf.getLatestLogIndexIncludeSnapshot() ||
+			lowest_commit_term != current_term {
 			rf.mu.Unlock()
 			continue
 		}
@@ -595,6 +592,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		}
 		dPrintf("Server[%d] send index %d to internal channel", rf.me, tmp.CommandIndex)
 		// FIXME: use channel communicate can been block and cause dead lock
+		// and cause a lot of duplicate command in internal_apply_chan
 		rf.internal_apply_chan <- tmp
 		rf.commit_index_in_quorom = idx
 	}
