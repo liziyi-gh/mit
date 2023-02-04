@@ -1475,8 +1475,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 
 		if len(args.ENTRIES) > 0 {
 			already_done := args.ENTRIES[0].INDEX < rf.next_index[server]
-			should_done_by_friend := args.ENTRIES[0].INDEX < rf.getLatestLogIndex()
-			if already_done || should_done_by_friend {
+			if already_done {
 				goto release_lock_and_return
 			}
 		}
