@@ -300,13 +300,17 @@ func (rf *Raft) removeLogIndexLessThan(last_log_index int) bool {
 }
 
 func (rf *Raft) setTerm(new_term int) {
-	rf.current_term = new_term
-	rf.persist()
+	if rf.current_term != new_term {
+		rf.current_term = new_term
+		rf.persist()
+	}
 }
 
 func (rf *Raft) setVotefor(vote_for int) {
-	rf.voted_for = vote_for
-	rf.persist()
+	if vote_for != rf.voted_for {
+		rf.voted_for = vote_for
+		rf.persist()
+	}
 }
 
 // return currentTerm and whether this server
@@ -495,7 +499,6 @@ type RequestInstallSnapshotArgs struct {
 	OFFSET              int // not use
 	DATA                []byte
 	DONE                bool // not use
-	UUID                uint64
 }
 
 type RequestInstallSnapshotReply struct {
@@ -880,9 +883,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		return
 	}
 
-	if args.LEADER_ID != rf.me {
-		rf.becomeFollower(args.TERM, args.LEADER_ID)
-	}
+	rf.becomeFollower(args.TERM, args.LEADER_ID)
 
 	if len(args.ENTRIES) == 0 {
 		matched, _ := findLogMatchedIndex(rf.log, args.PREV_LOG_TERM, args.PREV_LOG_INDEX)
@@ -905,39 +906,42 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 	return
 }
 
+func (rf *Raft) hasNewerLog(args *RequestVoteArgs) bool {
+	if rf.hasLog() {
+		my_latest_log := rf.getLatestLogRef()
+		newer_case1 := my_latest_log.TERM > args.PREV_LOG_TERM
+		newer_case2 := (my_latest_log.TERM == args.PREV_LOG_TERM) && (my_latest_log.INDEX > args.PREV_LOG_INDEX)
+
+		return newer_case1 || newer_case2
+	}
+
+	if rf.hasSnapshot() {
+		newer_case1 := rf.last_log_term_in_snapshot > args.PREV_LOG_TERM
+		newer_case2 := (rf.last_log_term_in_snapshot == args.PREV_LOG_TERM) && (rf.last_log_index_in_snapshot > args.PREV_LOG_INDEX)
+		return newer_case1 || newer_case2
+	}
+
+	return false
+}
+
 func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	reply.TERM = rf.current_term
 	reply.VOTE_GRANTED = false
-	dPrintf("Server[%d] got pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
+	dPrintf("Server[%d] got prevote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 
 	// I have newer term
 	if args.TERM < rf.current_term {
-		dPrintf("Server[%d] reject pre vote request from Server[%d], term too low", rf.me, args.CANDIDATE_ID)
+		dPrintf("Server[%d] reject prevote request from Server[%d], term too low", rf.me, args.CANDIDATE_ID)
 		return
 	}
 
 	// I have newer log
-	if rf.hasLog() {
-		my_latest_log := rf.getLatestLogRef()
-		newer_case1 := my_latest_log.TERM > args.PREV_LOG_TERM
-		newer_case2 := (my_latest_log.TERM == args.PREV_LOG_TERM) && (my_latest_log.INDEX > args.PREV_LOG_INDEX)
-
-		if newer_case1 || newer_case2 {
-			dPrintf("Server[%d] reject pre vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
-			return
-		}
-	}
-
-	if rf.hasSnapshot() && !rf.hasLog() {
-		newer_case1 := rf.last_log_term_in_snapshot > args.PREV_LOG_TERM
-		newer_case2 := (rf.last_log_term_in_snapshot == args.PREV_LOG_TERM) && (rf.last_log_index_in_snapshot > args.PREV_LOG_INDEX)
-		if newer_case1 || newer_case2 {
-			dPrintf("Server[%d] reject pre vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
-			return
-		}
+	if rf.hasNewerLog(args) {
+		dPrintf("Server[%d] reject prevote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
+		return
 	}
 
 	reply.VOTE_GRANTED = true
@@ -945,9 +949,7 @@ func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.becomeFollower(args.TERM-1, None)
 	}
 
-	dPrintf("Server[%d] granted pre vote request from Server[%d]", rf.me, args.CANDIDATE_ID)
-
-	return
+	dPrintf("Server[%d] granted prevote request from Server[%d]", rf.me, args.CANDIDATE_ID)
 }
 
 // example RequestVote RPC handler.
@@ -982,23 +984,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// I have newer log
-	if rf.hasLog() {
-		my_latest_log := rf.getLatestLogRef()
-		newer_case1 := my_latest_log.TERM > args.PREV_LOG_TERM
-		newer_case2 := (my_latest_log.TERM == args.PREV_LOG_TERM) && (my_latest_log.INDEX > args.PREV_LOG_INDEX)
-		if newer_case1 || newer_case2 {
-			dPrintf("Server[%d] reject vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
-			return
-		}
-	}
-
-	if rf.hasSnapshot() && !rf.hasLog() {
-		newer_case1 := rf.last_log_term_in_snapshot > args.PREV_LOG_TERM
-		newer_case2 := (rf.last_log_term_in_snapshot == args.PREV_LOG_TERM) && (rf.last_log_index_in_snapshot > args.PREV_LOG_INDEX)
-		if newer_case1 || newer_case2 {
-			dPrintf("Server[%d] reject pre vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
-			return
-		}
+	if rf.hasNewerLog(args) {
+		dPrintf("Server[%d] reject vote request from %d, because have newer log", rf.me, args.CANDIDATE_ID)
+		return
 	}
 
 	// I can voted candidate now
@@ -1047,7 +1035,6 @@ func (rf *Raft) sendPreVote(server int, args *RequestVoteArgs, reply *RequestVot
 
 func (rf *Raft) requestOneServerVote(index int, ans chan *RequestVoteReply, this_round_term int) {
 	args := &RequestVoteArgs{}
-	reply := &RequestVoteReply{}
 
 	rf.mu.Lock()
 	args.TERM = this_round_term
@@ -1062,33 +1049,52 @@ func (rf *Raft) requestOneServerVote(index int, ans chan *RequestVoteReply, this
 	}
 	rf.mu.Unlock()
 
-	for failed_times := 0; failed_times < rf.rpc_retry_times && !rf.killed(); failed_times++ {
-		if !rf.sendRequestVote(index, args, reply) {
-			time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
-			rf.mu.Lock()
-			if rf.current_term != this_round_term || !rf.statusIs(CANDIDATE) {
-				rf.mu.Unlock()
-				dPrintf("Server[%d] quit requestOneServerVote for Server[%d]", rf.me, index)
-				return
-			}
-			rf.mu.Unlock()
-			continue
-		}
-
-		dPrintf("Server[%d] send vote request to server[%d]", rf.me, index)
-		defer func() {
-			recover()
-		}()
+	if index == rf.me {
+		reply := &RequestVoteReply{}
+		rf.RequestVote(args, reply)
 		ans <- reply
-
 		return
 	}
-	return
+
+	timeout_ms := rf.timeout_const_ms
+	max_timeout_times := 10
+	done_ch := make(chan struct{}, max_timeout_times)
+	send_func := func() {
+		for failed_times := 0; failed_times < rf.rpc_retry_times && !rf.killed(); failed_times++ {
+			reply := &RequestVoteReply{}
+			if !rf.sendRequestVote(index, args, reply) {
+				time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
+				rf.mu.Lock()
+				if rf.current_term != this_round_term || !rf.statusIs(CANDIDATE) {
+					rf.mu.Unlock()
+					dPrintf("Server[%d] quit requestOneServerVote for Server[%d]", rf.me, index)
+					return
+				}
+				rf.mu.Unlock()
+				continue
+			}
+
+			dPrintf("Server[%d] send vote request to server[%d]", rf.me, index)
+			ans <- reply
+			done_ch <- struct{}{}
+			return
+		}
+	}
+
+	go send_func()
+
+	for timeout_times := 0; timeout_times < max_timeout_times && !rf.killed(); timeout_times++ {
+		select {
+		case <-done_ch:
+			return
+		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
+			go send_func()
+		}
+	}
 }
 
 func (rf *Raft) requestOneServerPreVote(index int, ans chan *RequestVoteReply, this_round_term int) {
 	args := &RequestVoteArgs{}
-	reply := &RequestVoteReply{}
 
 	rf.mu.Lock()
 	args.TERM = this_round_term + 1
@@ -1103,25 +1109,46 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan *RequestVoteReply, t
 	}
 	rf.mu.Unlock()
 
-	for failed_times := 0; failed_times < rf.rpc_retry_times && !rf.killed(); failed_times++ {
-		if !rf.sendPreVote(index, args, reply) {
-			time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
-			rf.mu.Lock()
-			if rf.current_term != this_round_term || !rf.statusIs(PRECANDIDATE) {
-				rf.mu.Unlock()
-				dPrintf("Server[%d] quit requestOneServerPreVote for Server[%d]", rf.me, index)
-				return
-			}
-			rf.mu.Unlock()
-			continue
-		}
-
-		dPrintf("Server[%d] send pre vote request to server[%d]", rf.me, index)
-		defer func() {
-			recover()
-		}()
+	if index == rf.me {
+		reply := &RequestVoteReply{}
+		rf.RequestPreVote(args, reply)
 		ans <- reply
 		return
+	}
+
+	timeout_ms := rf.timeout_const_ms
+	max_timeout_times := 10
+	done_ch := make(chan struct{}, max_timeout_times)
+	send_func := func() {
+		for failed_times := 0; failed_times < rf.rpc_retry_times && !rf.killed(); failed_times++ {
+			reply := &RequestVoteReply{}
+			if !rf.sendPreVote(index, args, reply) {
+				time.Sleep(time.Duration(rf.rpc_retry_interval_ms) * time.Millisecond)
+				rf.mu.Lock()
+				if rf.current_term != this_round_term || !rf.statusIs(PRECANDIDATE) {
+					rf.mu.Unlock()
+					dPrintf("Server[%d] quit requestOneServerPreVote for Server[%d]", rf.me, index)
+					return
+				}
+				rf.mu.Unlock()
+				continue
+			}
+
+			dPrintf("Server[%d] send pre vote request to server[%d]", rf.me, index)
+			ans <- reply
+			done_ch <- struct{}{}
+			return
+		}
+	}
+
+	go send_func()
+	for timeout_times := 0; timeout_times < max_timeout_times && !rf.killed(); timeout_times++ {
+		select {
+		case <-done_ch:
+			return
+		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
+			go send_func()
+		}
 	}
 }
 
@@ -1142,7 +1169,7 @@ func (rf *Raft) newVote(this_round_term int) {
 
 	got_tickets := 0
 	got_reply := 0
-	timeout_ms := 1000 * 10
+	timeout_ms := 3000 * 10
 
 	for !rf.killed() {
 		select {
@@ -1220,13 +1247,12 @@ func (rf *Raft) newPreVote(this_round_term int) {
 
 	got_tickets := 0
 	got_reply := 0
-	timeout_ms := 1000 * 10
+	timeout_ms := 3000 * 10
 
 	for !rf.killed() {
 		select {
 		case pre_vote_reply := <-reply:
 			got_reply++
-			dPrintf("Server[%d] got prevote reply at term %d, granted is %t", rf.me, this_round_term, pre_vote_reply.VOTE_GRANTED)
 			rf.mu.Lock()
 			if pre_vote_reply.TERM > rf.current_term {
 				rf.becomeFollower(pre_vote_reply.TERM, None)
@@ -1308,8 +1334,6 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		if rf.hasLog() {
 			if args.PREV_LOG_INDEX <= rf.log[0].INDEX {
 				new_prev_log_position = -1
-				dPrintln("leader log is", rf.log)
-				dPrintln("args.PREV_LOG_INDEX is", args.PREV_LOG_INDEX)
 				goto start_append_logs
 			}
 		} else {
@@ -1384,7 +1408,6 @@ func (rf *Raft) buildNewestArgs(server int) *RequestAppendEntryArgs {
 	}
 	latest_log_index := rf.getLatestLogIndex()
 	append_logs := make([]Log, 0)
-	dPrintf("leader log is %v", rf.log)
 	dPrintf("rf.next_index is %v", rf.next_index)
 	for idx := latest_log_index; idx >= rf.next_index[server]; idx-- {
 		position, ok := rf.getPositionByIndex(idx)
@@ -1419,8 +1442,6 @@ func (rf *Raft) buildNewestArgs(server int) *RequestAppendEntryArgs {
 }
 
 func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{}) {
-	// NOTE: sometimes this function run args nearly same time?
-	// just because schedule?
 	defer func() { ch <- struct{}{} }()
 	rf.mu.Lock()
 
@@ -1523,7 +1544,6 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 	}
 
 	for !rf.killed() {
-		// TODO: use channel close goroutine
 		rf.mu.Lock()
 		if rf.current_term != this_round_term {
 			rf.mu.Unlock()
@@ -1685,7 +1705,6 @@ func (rf *Raft) becomeLeader() {
 	}
 
 	dPrintf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
-	dPrintln("leader log is", rf.log)
 	return
 }
 
@@ -1724,8 +1743,7 @@ func (rf *Raft) ticker() {
 			}
 
 		case PRECANDIDATE:
-			rf.becomePreCandidate()
-			dPrintf("Server[%d] did not finish pre vote in time, become follower", rf.me)
+			rf.becomeFollower(rf.current_term, None)
 
 		case CANDIDATE:
 			if rf.enable_feature_prevote {
@@ -1733,7 +1751,6 @@ func (rf *Raft) ticker() {
 			} else {
 				rf.becomeCandidate(rf.current_term + 1)
 			}
-			dPrintf("Server[%d] did not finish vote in time, new term is %d", rf.me, rf.current_term)
 		}
 
 		rf.mu.Unlock()
