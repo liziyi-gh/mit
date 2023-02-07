@@ -226,13 +226,6 @@ func (rf *Raft) hasLog() bool {
 	return rf.logLength() >= 1
 }
 
-func (rf *Raft) getLatestLogRef() *Log {
-	if rf.hasLog() {
-		return &rf.log[len(rf.log)-1]
-	}
-	return nil
-}
-
 func (rf *Raft) getLatestLogIndex() int {
 	if rf.hasLog() {
 		return rf.log[len(rf.log)-1].INDEX
@@ -908,10 +901,9 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 
 func (rf *Raft) hasNewerLog(args *RequestVoteArgs) bool {
 	if rf.hasLog() {
-		my_latest_log := rf.getLatestLogRef()
+		my_latest_log := &rf.log[len(rf.log)-1]
 		newer_case1 := my_latest_log.TERM > args.PREV_LOG_TERM
 		newer_case2 := (my_latest_log.TERM == args.PREV_LOG_TERM) && (my_latest_log.INDEX > args.PREV_LOG_INDEX)
-
 		return newer_case1 || newer_case2
 	}
 
@@ -1039,14 +1031,8 @@ func (rf *Raft) requestOneServerVote(index int, ans chan *RequestVoteReply, this
 	rf.mu.Lock()
 	args.TERM = this_round_term
 	args.CANDIDATE_ID = rf.me
-
-	if rf.hasLog() || rf.hasSnapshot() {
-		args.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
-		args.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
-	} else {
-		args.PREV_LOG_TERM = None
-		args.PREV_LOG_INDEX = None
-	}
+	args.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
+	args.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
 	rf.mu.Unlock()
 
 	if index == rf.me {
@@ -1099,14 +1085,8 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan *RequestVoteReply, t
 	rf.mu.Lock()
 	args.TERM = this_round_term + 1
 	args.CANDIDATE_ID = rf.me
-
-	if rf.hasLog() || rf.hasSnapshot() {
-		args.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
-		args.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
-	} else {
-		args.PREV_LOG_TERM = None
-		args.PREV_LOG_INDEX = None
-	}
+	args.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
+	args.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
 	rf.mu.Unlock()
 
 	if index == rf.me {
@@ -1340,7 +1320,6 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 			dPrintln("backward args find position failed, a error or just cocurrent rpc.")
 			return
 		}
-
 	}
 
 	// peer have at leaest 1 log in args.PREV_LOG_TERM
@@ -1408,7 +1387,6 @@ func (rf *Raft) buildNewestArgs(server int) *RequestAppendEntryArgs {
 	}
 	latest_log_index := rf.getLatestLogIndex()
 	append_logs := make([]Log, 0)
-	dPrintf("rf.next_index is %v", rf.next_index)
 	for idx := latest_log_index; idx >= rf.next_index[server]; idx-- {
 		position, ok := rf.getPositionByIndex(idx)
 		if !ok {
@@ -1450,7 +1428,6 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		return
 	}
 
-	// NOTE: if use as heartbeat, delete this
 	if !rf.hasLog() && !rf.hasSnapshot() {
 		rf.mu.Unlock()
 		return
@@ -1494,14 +1471,10 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 			goto release_lock_and_return
 		}
 
-		if len(args.ENTRIES) > 0 {
-			already_done := args.ENTRIES[0].INDEX < rf.next_index[server]
-			if already_done {
-				goto release_lock_and_return
-			}
+		if len(args.ENTRIES) > 0 && args.ENTRIES[0].INDEX < rf.next_index[server] {
+			goto release_lock_and_return
 		}
 
-		// reply is false
 		dPrintf("Server[%v] send log to %v failed time: %v, args is %v", rf.me, server, failed_times, args)
 
 		need_snapshot := rf.hasSnapshot() &&
