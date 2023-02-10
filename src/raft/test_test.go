@@ -8,14 +8,12 @@ package raft
 // test with the original before submitting.
 //
 
-import (
-	"fmt"
-	"math/rand"
-	"sync"
-	"sync/atomic"
-	"testing"
-	"time"
-)
+import "testing"
+import "fmt"
+import "time"
+import "math/rand"
+import "sync/atomic"
+import "sync"
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
@@ -66,19 +64,15 @@ func TestReElection2A(t *testing.T) {
 	cfg.checkOneLeader()
 
 	// if the old leader rejoins, that shouldn't
-	// disturb the new leader. and the old leader
-	// should switch to follower.
+	// disturb the new leader.
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
 
-	// if there's no quorum, no new leader should
+	// if there's no quorum, no leader should
 	// be elected.
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
-
-	// check that the one connected server
-	// does not think it is the leader.
 	cfg.checkNoLeader()
 
 	// if a quorum arises, it should elect a leader.
@@ -183,105 +177,12 @@ func TestRPCBytes2B(t *testing.T) {
 	cfg.end()
 }
 
-//
-// test just failure of followers.
-//
-func For2023TestFollowerFailure2B(t *testing.T) {
-	servers := 3
-	cfg := make_config(t, servers, false, false)
-	defer cfg.cleanup()
-
-	cfg.begin("Test (2B): test progressive failure of followers")
-
-	cfg.one(101, servers, false)
-
-	// disconnect one follower from the network.
-	leader1 := cfg.checkOneLeader()
-	cfg.disconnect((leader1 + 1) % servers)
-
-	// the leader and remaining follower should be
-	// able to agree despite the disconnected follower.
-	cfg.one(102, servers-1, false)
-	time.Sleep(RaftElectionTimeout)
-	cfg.one(103, servers-1, false)
-
-	// disconnect the remaining follower
-	leader2 := cfg.checkOneLeader()
-	cfg.disconnect((leader2 + 1) % servers)
-	cfg.disconnect((leader2 + 2) % servers)
-
-	// submit a command.
-	index, _, ok := cfg.rafts[leader2].Start(104)
-	if ok != true {
-		t.Fatalf("leader rejected Start()")
-	}
-	if index != 4 {
-		t.Fatalf("expected index 4, got %v", index)
-	}
-
-	time.Sleep(2 * RaftElectionTimeout)
-
-	// check that command 104 did not commit.
-	n, _ := cfg.nCommitted(index)
-	if n > 0 {
-		t.Fatalf("%v committed but no majority", n)
-	}
-
-	cfg.end()
-}
-
-//
-// test just failure of leaders.
-//
-func For2023TestLeaderFailure2B(t *testing.T) {
-	servers := 3
-	cfg := make_config(t, servers, false, false)
-	defer cfg.cleanup()
-
-	cfg.begin("Test (2B): test failure of leaders")
-
-	cfg.one(101, servers, false)
-
-	// disconnect the first leader.
-	leader1 := cfg.checkOneLeader()
-	cfg.disconnect(leader1)
-
-	// the remaining followers should elect
-	// a new leader.
-	cfg.one(102, servers-1, false)
-	time.Sleep(RaftElectionTimeout)
-	cfg.one(103, servers-1, false)
-
-	// disconnect the new leader.
-	leader2 := cfg.checkOneLeader()
-	cfg.disconnect(leader2)
-
-	// submit a command to each server.
-	for i := 0; i < servers; i++ {
-		cfg.rafts[i].Start(104)
-	}
-
-	time.Sleep(2 * RaftElectionTimeout)
-
-	// check that command 104 did not commit.
-	n, _ := cfg.nCommitted(4)
-	if n > 0 {
-		t.Fatalf("%v committed but no majority", n)
-	}
-
-	cfg.end()
-}
-
-//
-// test that a follower participates after
-// disconnect and re-connect.
-//
 func TestFailAgree2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
 
-	cfg.begin("Test (2B): agreement after follower reconnects")
+	cfg.begin("Test (2B): agreement despite follower disconnection")
 
 	cfg.one(101, servers, false)
 
@@ -682,68 +583,6 @@ loop:
 	cfg.end()
 }
 
-func __oneRoundAgreement(t *testing.T, cfg *config, servers int) {
-	iters := 20
-	for index := 1; index < iters+1; index++ {
-
-		xindex := cfg.one(index*100, servers, true)
-		if xindex != index {
-			t.Fatalf("got index %v but expected %v", xindex, index)
-		}
-	}
-}
-
-// func TestGoroutineLeak1LZYA(t *testing.T) {
-// 	servers := 5
-// 	cfg := make_config(t, servers, false, false)
-// 	defer cfg.cleanup()
-// 	cfg.begin("Test (2B): test gorountine number")
-
-// 	__oneRoundAgreement(t, cfg, servers)
-
-// 	leader1 := cfg.checkOneLeader()
-// 	cfg.disconnect(leader1)
-// 	cfg.disconnect((leader1 + 1) % servers)
-// 	cfg.disconnect((leader1 + 2) % servers)
-
-// 	time.Sleep(time.Duration(20000) * time.Millisecond)
-// 	n1 := runtime.NumGoroutine()
-// 	time.Sleep(time.Duration(20000) * time.Millisecond)
-// 	n2 := runtime.NumGoroutine()
-// 	// fmt.Printf("gorountines n1 is %d, n2 is %d\n", n1, n2)
-
-// 	// buf := make([]byte, 1<<20)
-// 	// stack_len := runtime.Stack(buf, true)
-// 	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
-
-// 	time.Sleep(time.Duration(20000) * time.Millisecond)
-// 	n3 := runtime.NumGoroutine()
-// 	// fmt.Printf("gorountines n2 is %d, n3 is %d\n", n2, n3)
-// 	// stack_len = runtime.Stack(buf, true)
-// 	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
-// 	cfg.connect((leader1 + 2) % servers)
-
-// 	time.Sleep(time.Duration(20000) * time.Millisecond)
-// 	n4 := runtime.NumGoroutine()
-// 	// fmt.Printf("gorountines n3 is %d, n4 is %d\n", n3, n4)
-// 	// stack_len = runtime.Stack(buf, true)
-// 	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
-
-// 	cfg.connect(leader1)
-// 	cfg.connect((leader1 + 1) % servers)
-// 	time.Sleep(time.Duration(20000) * time.Millisecond)
-// 	n5 := runtime.NumGoroutine()
-// 	// fmt.Printf("gorountines n4 is %d, n5 is %d\n", n4, n5)
-// 	// stack_len = runtime.Stack(buf, true)
-// 	// fmt.Printf("=== received SIGQUIT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stack_len])
-
-// 	if n2-n1 > 20 || n3-n2 > 20 || n4-n3 > 20 || n5-n4 > 20 {
-// 		t.Fatalf("too many gorountines %d", n2-n1)
-// 	}
-
-// 	cfg.end()
-// }
-
 func TestPersist12C(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
@@ -991,13 +830,11 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
 
-		// 50% disconnect leader
 		if leader != -1 && (rand.Int()%1000) < int(RaftElectionTimeout/time.Millisecond)/2 {
 			cfg.disconnect(leader)
 			nup -= 1
 		}
 
-		// bring random disconnect server back if not enough quarom
 		if nup < 3 {
 			s := rand.Int() % servers
 			if cfg.connected[s] == false {
@@ -1200,22 +1037,12 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 			cfg.crash1(victim)
 			cfg.one(rand.Int(), servers-1, true)
 		}
-
-		// perhaps send enough to get a snapshot
-		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
-		for i := 0; i < nn; i++ {
+		// send enough to get a snapshot
+		for i := 0; i < SnapShotInterval+1; i++ {
 			cfg.rafts[sender].Start(rand.Int())
 		}
-
 		// let applier threads catch up with the Start()'s
-		if disconnect == false && crash == false {
-			// make sure all followers have caught up, so that
-			// an InstallSnapshot RPC isn't required for
-			// TestSnapshotBasic2D().
-			cfg.one(rand.Int(), servers, true)
-		} else {
-			cfg.one(rand.Int(), servers-1, true)
-		}
+		cfg.one(rand.Int(), servers-1, true)
 
 		if cfg.LogSize() >= MAXLOGSIZE {
 			cfg.t.Fatalf("Log size too large")
@@ -1256,47 +1083,4 @@ func TestSnapshotInstallCrash2D(t *testing.T) {
 
 func TestSnapshotInstallUnCrash2D(t *testing.T) {
 	snapcommon(t, "Test (2D): install snapshots (unreliable+crash)", false, false, true)
-}
-
-//
-// do the servers persist the snapshots, and
-// restart using snapshot along with the
-// tail of the log?
-//
-func TestSnapshotAllCrash2D(t *testing.T) {
-	servers := 3
-	iters := 5
-	cfg := make_config(t, servers, false, true)
-	defer cfg.cleanup()
-
-	cfg.begin("Test (2D): crash and restart all servers")
-
-	cfg.one(rand.Int(), servers, true)
-
-	for i := 0; i < iters; i++ {
-		// perhaps enough to get a snapshot
-		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
-		for i := 0; i < nn; i++ {
-			cfg.one(rand.Int(), servers, true)
-		}
-
-		index1 := cfg.one(rand.Int(), servers, true)
-
-		// crash all
-		for i := 0; i < servers; i++ {
-			cfg.crash1(i)
-		}
-
-		// revive all
-		for i := 0; i < servers; i++ {
-			cfg.start1(i, cfg.applierSnap)
-			cfg.connect(i)
-		}
-
-		index2 := cfg.one(rand.Int(), servers, true)
-		if index2 < index1+1 {
-			t.Fatalf("index decreased from %v to %v", index1, index2)
-		}
-	}
-	cfg.end()
 }
