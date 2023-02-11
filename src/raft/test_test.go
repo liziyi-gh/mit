@@ -121,7 +121,7 @@ func TestManyElections2A(t *testing.T) {
 
 func TestBasicAgree2B(t *testing.T) {
 	servers := 3
-	cfg := make_config(t, servers, false, false)
+	cfg := make_config(t, servers, false, true)
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2B): basic agreement")
@@ -218,7 +218,7 @@ func TestFailNoAgree2B(t *testing.T) {
 
 	cfg.begin("Test (2B): no agreement if too many followers disconnect")
 
-	cfg.one(10, servers, false)
+	cfg.one(10, servers, true)
 
 	// 3 of 5 followers disconnect
 	leader := cfg.checkOneLeader()
