@@ -14,7 +14,7 @@ do
     RAFT_LOG_FILE=${test_path}/raft.log
     # go test -run 2A > ${TESTER_LOG_FILE}
     # go test -run TestReElection2A -race > ${TESTER_LOG_FILE}
-    # go test -run 2B > ${TESTER_LOG_FILE}
+    # go test -run 2B -race > ${TESTER_LOG_FILE}
     # go test -run 2C > ${TESTER_LOG_FILE}
     # go test -run 2D > ${TESTER_LOG_FILE}
     go test -race > ${TESTER_LOG_FILE}

@@ -157,7 +157,6 @@ type Raft struct {
 
 	// Volatile on all servers
 	commit_index           int
-	last_applied           int
 	commit_index_in_quorom int
 
 	// Volatile on leaders
@@ -386,6 +385,7 @@ func (rf *Raft) readPersist(data []byte) {
 			SnapshotTerm:  last_log_term_in_snapshot,
 			SnapshotIndex: last_log_index_in_snapshot,
 		}
+		rf.commit_index_in_quorom = last_log_index_in_snapshot
 		rf.internal_apply_chan <- command
 	}
 	dPrintln("Server", rf.me, "restore with",
@@ -396,7 +396,6 @@ func (rf *Raft) readPersist(data []byte) {
 func (rf *Raft) doCondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.last_applied = lastIncludedIndex
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
@@ -562,7 +561,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		return
 	}
 
-	for idx := rf.commit_index + 1; idx <= new_commit_index && idx <= rf.getLatestLogIndex(); idx++ {
+	for idx := rf.commit_index_in_quorom + 1; idx <= new_commit_index && idx <= rf.getLatestLogIndex(); idx++ {
 		command, ok := rf.getLogCommandByIndex(idx)
 		if !ok {
 			return
@@ -574,9 +573,8 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		}
 		dPrintf("Server[%d] send index %d to internal channel", rf.me, tmp.CommandIndex)
 		// FIXME: use channel communicate can been block and cause dead lock
-		// and cause a lot of duplicate command in internal_apply_chan
-		rf.internal_apply_chan <- tmp
 		rf.commit_index_in_quorom = idx
+		rf.internal_apply_chan <- tmp
 	}
 
 }
@@ -693,6 +691,7 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 		SnapshotTerm:  args.LAST_INCLUDED_TERM,
 		SnapshotIndex: args.LAST_INCLUDED_INDEX,
 	}
+	rf.commit_index_in_quorom = args.LAST_INCLUDED_INDEX
 	rf.internal_apply_chan <- apply_msg
 }
 
