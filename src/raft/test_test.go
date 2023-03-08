@@ -184,7 +184,7 @@ func TestFailAgree2B(t *testing.T) {
 
 	cfg.begin("Test (2B): agreement despite follower disconnection")
 
-	cfg.one(101, servers, false)
+	cfg.one(101, servers, true)
 
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
