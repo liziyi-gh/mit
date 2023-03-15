@@ -480,7 +480,6 @@ type RequestAppendEntryArgs struct {
 	LEADER_COMMIT  int   // leader's commit_index
 	PREV_LOG_INDEX int
 	PREV_LOG_TERM  int
-	UUID           uint64
 }
 
 type RequestInstallSnapshotArgs struct {
@@ -1379,7 +1378,6 @@ func (rf *Raft) buildNewestArgs(server int) *RequestAppendEntryArgs {
 		TERM:          rf.current_term,
 		LEADER_ID:     rf.me,
 		LEADER_COMMIT: rf.commit_index,
-		UUID:          rand.Uint64(),
 	}
 	if !rf.hasLog() {
 		return args
