@@ -1290,19 +1290,16 @@ func (rf *Raft) successAppend(server int, this_round_term int,
 	rf.recently_commit <- struct{}{}
 }
 
-func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) {
-	initil_log_position := rf.logLength() - 1
+func (rf *Raft) backwardNewLogPosition(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) int {
 	new_prev_log_position, ok := rf.getPositionByIndex(args.PREV_LOG_INDEX - 1)
-	new_entries := make([]Log, 0)
 	if !ok {
 		if rf.hasLog() {
 			if args.PREV_LOG_INDEX <= rf.log[0].INDEX {
-				new_prev_log_position = -1
-				goto start_append_logs
+				return -1
 			}
 		} else {
 			dPrintln("backward args find position failed, a error or just cocurrent rpc.")
-			return
+			return -2
 		}
 	}
 
@@ -1313,8 +1310,7 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		if ok {
 			tmp, ok2 := rf.getPositionByIndex(last_index_of_prev_term)
 			if ok2 {
-				new_prev_log_position = tmp
-				goto start_append_logs
+				return tmp
 			}
 		}
 	}
@@ -1325,18 +1321,22 @@ func (rf *Raft) backwardArgsWhenAppendEntryFailed(args *RequestAppendEntryArgs, 
 		if ok {
 			tmp, ok3 := rf.getPositionByIndex(last_index_before_term)
 			if ok3 {
-				new_prev_log_position = tmp
-				goto start_append_logs
+				return tmp
 			}
 		} else {
 			if new_prev_log_position >= 0 {
 				new_prev_log_position = 0
-				goto start_append_logs
+				return 0
 			}
 		}
 	}
 
-start_append_logs:
+	return -2
+}
+
+func (rf *Raft) appendToNewPrevPos(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply, new_prev_log_position int) {
+	initil_log_position := rf.logLength() - 1
+	new_entries := make([]Log, 0)
 	// add logs from latest to prev_log_position to args
 	for i := initil_log_position; i > new_prev_log_position; i-- {
 		new_entries = append(new_entries, rf.log[i])
@@ -1481,7 +1481,8 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 			goto release_lock_and_return
 		}
 
-		rf.backwardArgsWhenAppendEntryFailed(args, reply)
+		new_prev_log_position := rf.backwardNewLogPosition(args, reply)
+		rf.appendToNewPrevPos(args, reply, new_prev_log_position)
 		dPrintf("Server[%v] log dismatch, new args is %v", server, args)
 		rf.mu.Unlock()
 	}
