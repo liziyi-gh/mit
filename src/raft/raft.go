@@ -415,6 +415,8 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 }
 
 func (rf *Raft) doSnapshot(index int, snapshot []byte) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	err := !rf.hasLog() ||
 		index < rf.log[0].INDEX ||
 		index <= rf.last_log_index_in_snapshot
@@ -583,7 +585,9 @@ func (rf *Raft) sendCommandToApplierFunction() {
 		}
 
 		if new_command.SnapshotValid {
+			rf.mu.Unlock()
 			rf.apply_ch <- new_command
+			rf.mu.Lock()
 			rf.commit_index = new_command.SnapshotIndex
 			rf.mu.Unlock()
 			continue
