@@ -415,9 +415,6 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 }
 
 func (rf *Raft) doSnapshot(index int, snapshot []byte) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
 	err := !rf.hasLog() ||
 		index < rf.log[0].INDEX ||
 		index <= rf.last_log_index_in_snapshot
@@ -425,15 +422,6 @@ func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 		return
 	}
 
-	if index > rf.commit_index_in_quorom || index > rf.commit_index {
-		dPrintf("Server[%v] Pause snapshot, wait forsome log commit", rf.me)
-		go func() {
-			duration_ms := 100
-			time.Sleep(time.Duration(duration_ms) * time.Millisecond)
-			rf.doSnapshot(index, snapshot)
-		}()
-		return
-	}
 	rf.snapshot_data = snapshot
 	rf.last_log_index_in_snapshot = index
 	rf.last_log_term_in_snapshot = rf.getLogTermByIndex(index)
@@ -448,7 +436,7 @@ func (rf *Raft) doSnapshot(index int, snapshot []byte) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
-	go rf.doSnapshot(index, snapshot)
+	rf.doSnapshot(index, snapshot)
 }
 
 func (rf *Raft) hasSnapshot() bool {
@@ -595,9 +583,7 @@ func (rf *Raft) sendCommandToApplierFunction() {
 		}
 
 		if new_command.SnapshotValid {
-			rf.mu.Unlock()
 			rf.apply_ch <- new_command
-			rf.mu.Lock()
 			rf.commit_index = new_command.SnapshotIndex
 			rf.mu.Unlock()
 			continue
@@ -1369,8 +1355,8 @@ start_append_logs:
 			args.PREV_LOG_TERM = 0
 			args.PREV_LOG_INDEX = 0
 		}
-
 	}
+
 }
 
 func (rf *Raft) buildNewestArgs(server int) *RequestAppendEntryArgs {
