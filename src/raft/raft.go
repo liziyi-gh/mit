@@ -602,40 +602,6 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 	}
 }
 
-func (rf *Raft) handleOneServerHeartbeat(server int, this_round_term int) {
-	// FIXME: this is an arbitray number
-	worker_number := 100
-	ch := make(chan struct{}, worker_number)
-	for i := 0; i < worker_number; i++ {
-		ch <- struct{}{}
-	}
-	for !rf.killed() {
-		time.Sleep(time.Duration(rf.heartbeat_interval_ms) * time.Millisecond)
-		<-ch
-
-		rf.mu.Lock()
-		if rf.current_term != this_round_term {
-			rf.mu.Unlock()
-			return
-		}
-		rf.mu.Unlock()
-
-		go func() {
-			rf.mu.Lock()
-			args := &RequestAppendEntryArgs{}
-			reply := &RequestAppendEntryReply{}
-			args.TERM = rf.current_term
-			args.LEADER_ID = rf.me
-			args.LEADER_COMMIT = rf.quorom_commit_index
-			args.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
-			args.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
-			rf.mu.Unlock()
-			rf.sendOneAppendEntry(server, args, reply)
-			ch <- struct{}{}
-		}()
-	}
-}
-
 func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *RequestInstallSnapshotReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -1404,11 +1370,6 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		return
 	}
 
-	if !rf.hasLog() && !rf.hasSnapshot() {
-		rf.mu.Unlock()
-		return
-	}
-
 	if server == rf.me {
 		rf.recently_commit <- struct{}{}
 		rf.mu.Unlock()
@@ -1652,7 +1613,6 @@ func (rf *Raft) becomeLeader() {
 			continue
 		}
 		rf.next_index[i] = 1
-		go rf.handleOneServerHeartbeat(i, rf.current_term)
 		go rf.handleAppendEntryForOneServer(i, rf.current_term)
 	}
 
