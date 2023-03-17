@@ -546,7 +546,8 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 }
 
 func (rf *Raft) updateCommitIndex(new_commit_index int) {
-	if new_commit_index <= rf.commit_index || new_commit_index <= rf.last_log_index_in_snapshot {
+	if new_commit_index <= rf.commit_index_in_quorom ||
+		new_commit_index <= rf.last_log_index_in_snapshot {
 		return
 	}
 
@@ -571,27 +572,17 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 func (rf *Raft) sendCommandToApplierFunction() {
 	for !rf.killed() {
 		new_command := <-rf.internal_apply_chan
-		dPrintf("Server[%d] get new command index %d", rf.me, new_command.CommandIndex)
-		rf.mu.Lock()
-		if new_command.CommandValid && new_command.CommandIndex > rf.commit_index {
-			dPrintf("Server[%d] going to commit index %d", rf.me, new_command.CommandIndex)
-			rf.mu.Unlock()
-			rf.apply_ch <- new_command
-			rf.mu.Lock()
-			rf.commit_index = new_command.CommandIndex
-			rf.mu.Unlock()
-			dPrintf("Server[%d] committed index %d", rf.me, new_command.CommandIndex)
-			continue
+		new_command_idx := 0
+		if new_command.CommandValid {
+			new_command_idx = new_command.CommandIndex
 		}
-
 		if new_command.SnapshotValid {
-			rf.mu.Unlock()
-			rf.apply_ch <- new_command
-			rf.mu.Lock()
-			rf.commit_index = new_command.SnapshotIndex
-			rf.mu.Unlock()
-			continue
+			new_command_idx = new_command.SnapshotIndex
 		}
+		dPrintf("Server[%d] get new command index %d", rf.me, new_command_idx)
+		rf.apply_ch <- new_command
+		rf.mu.Lock()
+		rf.commit_index = new_command_idx
 		rf.mu.Unlock()
 	}
 }
@@ -663,6 +654,9 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 	}
 	if args.LAST_INCLUDED_INDEX == rf.last_log_index_in_snapshot &&
 		args.LAST_INCLUDED_TERM == rf.last_log_term_in_snapshot {
+		return
+	}
+	if args.LAST_INCLUDED_INDEX < rf.commit_index_in_quorom {
 		return
 	}
 
