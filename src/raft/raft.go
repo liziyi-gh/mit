@@ -156,8 +156,7 @@ type Raft struct {
 	log          []Log
 
 	// Volatile on all servers
-	commit_index           int
-	commit_index_in_quorom int
+	quorom_commit_index int
 
 	// Volatile on leaders
 	next_index  []int
@@ -378,14 +377,13 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.last_log_term_in_snapshot = last_log_term_in_snapshot
 		rf.last_log_index_in_snapshot = last_log_index_in_snapshot
 		rf.snapshot_data = snapshot_data
-		rf.commit_index = last_log_index_in_snapshot
 		command := ApplyMsg{
 			SnapshotValid: true,
 			Snapshot:      snapshot_data,
 			SnapshotTerm:  last_log_term_in_snapshot,
 			SnapshotIndex: last_log_index_in_snapshot,
 		}
-		rf.commit_index_in_quorom = last_log_index_in_snapshot
+		rf.quorom_commit_index = last_log_index_in_snapshot
 		rf.internal_apply_chan <- command
 	}
 	dPrintln("Server", rf.me, "restore with",
@@ -546,12 +544,12 @@ func (rf *Raft) leaderUpdateCommitIndex(current_term int) {
 }
 
 func (rf *Raft) updateCommitIndex(new_commit_index int) {
-	if new_commit_index <= rf.commit_index_in_quorom ||
+	if new_commit_index <= rf.quorom_commit_index ||
 		new_commit_index <= rf.last_log_index_in_snapshot {
 		return
 	}
 
-	for idx := rf.commit_index_in_quorom + 1; idx <= new_commit_index && idx <= rf.getLatestLogIndex(); idx++ {
+	for idx := rf.quorom_commit_index + 1; idx <= new_commit_index && idx <= rf.getLatestLogIndex(); idx++ {
 		command, ok := rf.getLogCommandByIndex(idx)
 		if !ok {
 			return
@@ -563,7 +561,7 @@ func (rf *Raft) updateCommitIndex(new_commit_index int) {
 		}
 		dPrintf("Server[%d] send index %d to internal channel", rf.me, tmp.CommandIndex)
 		// FIXME: use channel communicate can been block and cause dead lock
-		rf.commit_index_in_quorom = idx
+		rf.quorom_commit_index = idx
 		rf.internal_apply_chan <- tmp
 	}
 
@@ -581,9 +579,6 @@ func (rf *Raft) sendCommandToApplierFunction() {
 		}
 		dPrintf("Server[%d] get new command index %d", rf.me, new_command_idx)
 		rf.apply_ch <- new_command
-		rf.mu.Lock()
-		rf.commit_index = new_command_idx
-		rf.mu.Unlock()
 	}
 }
 
@@ -600,7 +595,7 @@ func (rf *Raft) sendOneRoundHeartBeat() {
 		argi := &args[i]
 		argi.TERM = rf.current_term
 		argi.LEADER_ID = rf.me
-		argi.LEADER_COMMIT = rf.commit_index
+		argi.LEADER_COMMIT = rf.quorom_commit_index
 		argi.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
 		argi.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
 		go rf.sendOneAppendEntry(i, argi, &reply[i])
@@ -631,7 +626,7 @@ func (rf *Raft) handleOneServerHeartbeat(server int, this_round_term int) {
 			reply := &RequestAppendEntryReply{}
 			args.TERM = rf.current_term
 			args.LEADER_ID = rf.me
-			args.LEADER_COMMIT = rf.commit_index
+			args.LEADER_COMMIT = rf.quorom_commit_index
 			args.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
 			args.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
 			rf.mu.Unlock()
@@ -656,7 +651,7 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 		args.LAST_INCLUDED_TERM == rf.last_log_term_in_snapshot {
 		return
 	}
-	if args.LAST_INCLUDED_INDEX < rf.commit_index_in_quorom {
+	if args.LAST_INCLUDED_INDEX < rf.quorom_commit_index {
 		return
 	}
 
@@ -674,7 +669,7 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 		SnapshotTerm:  args.LAST_INCLUDED_TERM,
 		SnapshotIndex: args.LAST_INCLUDED_INDEX,
 	}
-	rf.commit_index_in_quorom = args.LAST_INCLUDED_INDEX
+	rf.quorom_commit_index = args.LAST_INCLUDED_INDEX
 	rf.internal_apply_chan <- apply_msg
 }
 
@@ -1361,7 +1356,7 @@ func (rf *Raft) buildNewestArgs(server int) *RequestAppendEntryArgs {
 	args := &RequestAppendEntryArgs{
 		TERM:          rf.current_term,
 		LEADER_ID:     rf.me,
-		LEADER_COMMIT: rf.commit_index,
+		LEADER_COMMIT: rf.quorom_commit_index,
 	}
 	if !rf.hasLog() {
 		return args
