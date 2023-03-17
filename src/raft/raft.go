@@ -834,8 +834,10 @@ start_append_logs:
 
 	rf.appendLogs(append_logs)
 	if len(append_logs) > 0 {
-		dPrintf("Server[%v] new log is %v", rf.me, rf.log)
+		dPrintf("Server[%v] append new log", rf.me)
 	}
+
+	rf.updateCommitIndex(args.LEADER_COMMIT)
 
 	return
 }
@@ -864,9 +866,7 @@ func (rf *Raft) RequestAppendEntry(args *RequestAppendEntryArgs, reply *RequestA
 		if !matched {
 			return
 		}
-		if rf.hasLog() && args.PREV_LOG_INDEX <= args.LEADER_COMMIT {
-			rf.updateCommitIndex(args.PREV_LOG_INDEX)
-		}
+		rf.updateCommitIndex(args.LEADER_COMMIT)
 		reply.SUCCESS = true
 		return
 	}
@@ -1476,6 +1476,8 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 
 		new_prev_log_position := rf.backwardNewLogPosition(args, reply)
 		rf.appendToNewPrevPos(args, reply, new_prev_log_position)
+		args.LEADER_COMMIT = rf.quorom_commit_index
+
 		dPrintf("Server[%v] log dismatch, new args is %v", server, args)
 		rf.mu.Unlock()
 	}
