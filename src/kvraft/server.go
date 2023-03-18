@@ -373,9 +373,10 @@ func (kv *KVServer) applySnapshot(command raft.ApplyMsg) {
 func (kv *KVServer) applier() {
 	for command := range kv.applyCh {
 		if kv.killed() {
+			DPrintln("Server", kv.me, "[applier] kill", command.CommandIndex)
 			return
 		}
-		DPrintln("Server", kv.me, "[applier] get command", command)
+
 		if command.CommandValid {
 			kv.applyCommand(command)
 		}
@@ -395,7 +396,7 @@ func (kv *KVServer) applier() {
 			data := w.Bytes()
 			kv.rf.Snapshot(kv.applyed_index, data)
 			kv.mu.Unlock()
-			DPrintf("Server[%d] [applier] create snapshot", kv.me)
+			DPrintf("Server[%d] [applier] create snapshot, idx is %v", kv.me, kv.applyed_index)
 		}
 	}
 }
