@@ -1475,7 +1475,7 @@ func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
 	}
 }
 
-func (rf *Raft) newRoundAppend(command interface{}, index int) {
+func (rf *Raft) newRoundAppend() {
 	for i := 0; i < rf.all_server_number; i++ {
 		rf.append_entry_chan[i] <- struct{}{}
 	}
@@ -1518,7 +1518,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		},
 	}
 	rf.appendLogs(new_log)
-	go rf.newRoundAppend(command, new_log_index)
+	go rf.newRoundAppend()
 
 	dPrintf("Server[%v] Start accept new log: %v", rf.me, new_log)
 
