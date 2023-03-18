@@ -1339,8 +1339,8 @@ func (rf *Raft) buildNewestArgs(server int) *RequestAppendEntryArgs {
 	args.ENTRIES = append_logs
 
 	if len(args.ENTRIES) == 0 {
-		args.PREV_LOG_INDEX = 0
-		args.PREV_LOG_TERM = 0
+		args.PREV_LOG_INDEX = rf.getLatestLogIndex()
+		args.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
 
 		return args
 	}
