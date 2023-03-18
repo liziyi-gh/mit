@@ -577,8 +577,8 @@ func (rf *Raft) sendCommandToApplierFunction() {
 		if new_command.SnapshotValid {
 			new_command_idx = new_command.SnapshotIndex
 		}
-		dPrintf("Server[%d] get new command index %d", rf.me, new_command_idx)
 		rf.apply_ch <- new_command
+		dPrintf("Server[%d] commit command index %d", rf.me, new_command_idx)
 	}
 }
 
