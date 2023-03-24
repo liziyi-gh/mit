@@ -1450,7 +1450,7 @@ release_lock_and_return:
 }
 
 func (rf *Raft) handleAppendEntryForOneServer(server int, this_round_term int) {
-	worker_number := 10
+	worker_number := 100
 	ch := make(chan struct{}, worker_number)
 	for i := 0; i < worker_number; i++ {
 		ch <- struct{}{}
