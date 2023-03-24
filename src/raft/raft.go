@@ -501,7 +501,7 @@ func (rf *Raft) sendAppendEntry(server int, args *RequestAppendEntryArgs, reply 
 }
 
 func (rf *Raft) sendOneAppendEntry(server int, args *RequestAppendEntryArgs, reply *RequestAppendEntryReply) bool {
-	for failed_times := 0; failed_times < rf.rpc_retry_times; failed_times++ {
+	for failed_times := 0; failed_times < rf.rpc_retry_times && !rf.killed(); failed_times++ {
 		if rf.sendAppendEntry(server, args, reply) {
 			return true
 		}
@@ -656,7 +656,7 @@ func (rf *Raft) sendSnapshot(server int, this_round_term int) {
 	rf.mu.Unlock()
 	reply := &RequestInstallSnapshotReply{}
 
-	for failed_times := 0; failed_times < rf.rpc_retry_times; failed_times++ {
+	for failed_times := 0; failed_times < rf.rpc_retry_times && !rf.killed(); failed_times++ {
 		ok := rf.sendSnapshotOnetime(server, args, reply)
 		rf.mu.Lock()
 		if rf.current_term != this_round_term {
@@ -793,14 +793,13 @@ start_append_logs:
 	// rpc call success
 	reply.SUCCESS = true
 
-	// revert logs to normal order
-	for i, j := 0, len(append_logs)-1; i < j; i, j = i+1, j-1 {
-		append_logs[i], append_logs[j] = append_logs[j], append_logs[i]
-	}
-
-	rf.appendLogs(append_logs)
 	if len(append_logs) > 0 {
-		dPrintf("Server[%v] append new log", rf.me)
+		// revert logs to normal order
+		for i, j := 0, len(append_logs)-1; i < j; i, j = i+1, j-1 {
+			append_logs[i], append_logs[j] = append_logs[j], append_logs[i]
+		}
+		rf.appendLogs(append_logs)
+		dPrintf("Server[%v] append new log %v", rf.me, append_logs)
 	}
 
 	rf.updateCommitIndex(args.LEADER_COMMIT)
@@ -1092,7 +1091,7 @@ func (rf *Raft) newVote(this_round_term int) {
 
 	got_tickets := 0
 	got_reply := 0
-	timeout_ms := 3000 * 10
+	timeout_ms := 1000 * 30
 
 	for !rf.killed() {
 		select {
@@ -1170,7 +1169,7 @@ func (rf *Raft) newPreVote(this_round_term int) {
 
 	got_tickets := 0
 	got_reply := 0
-	timeout_ms := 3000 * 10
+	timeout_ms := 1000 * 30
 
 	for !rf.killed() {
 		select {
@@ -1293,10 +1292,12 @@ func (rf *Raft) backwardNewLogPosition(args *RequestAppendEntryArgs, reply *Requ
 	return -2
 }
 
-func (rf *Raft) appendToNewPrevPos(args *RequestAppendEntryArgs, reply *RequestAppendEntryReply, new_prev_log_position int) {
+// add logs from latest to prev_log_position to args
+func (rf *Raft) setArgsLogs(args *RequestAppendEntryArgs,
+	reply *RequestAppendEntryReply,
+	new_prev_log_position int) {
 	initil_log_position := rf.logLength() - 1
 	new_entries := make([]Log, 0)
-	// add logs from latest to prev_log_position to args
 	for i := initil_log_position; i > new_prev_log_position; i-- {
 		new_entries = append(new_entries, rf.log[i])
 	}
@@ -1315,7 +1316,6 @@ func (rf *Raft) appendToNewPrevPos(args *RequestAppendEntryArgs, reply *RequestA
 			args.PREV_LOG_INDEX = 0
 		}
 	}
-
 }
 
 func (rf *Raft) buildNewestArgs(server int) *RequestAppendEntryArgs {
@@ -1422,7 +1422,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 
 		if need_snapshot {
 			rf.mu.Unlock()
-			dPrintf("Server[%v] need snapshot", server)
+			dPrintf("Server[%v] server%v need snapshot", rf.me, server)
 			rf.sendSnapshot(server, this_round_term)
 			return
 		}
@@ -1436,7 +1436,7 @@ func (rf *Raft) sendNewestLog(server int, this_round_term int, ch chan struct{})
 		}
 
 		new_prev_log_position := rf.backwardNewLogPosition(args, reply)
-		rf.appendToNewPrevPos(args, reply, new_prev_log_position)
+		rf.setArgsLogs(args, reply, new_prev_log_position)
 		args.LEADER_COMMIT = rf.quorom_commit_index
 
 		dPrintf("Server[%v] log dismatch, new args is %v", server, args)
