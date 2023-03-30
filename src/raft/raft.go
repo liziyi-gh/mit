@@ -1704,7 +1704,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.match_index = make([]int, rf.all_server_number)
 	rf.next_index = make([]int, rf.all_server_number)
 	// FIXME: this is an arbitray number
-	rf.chanel_buffer_size = 100000
+	rf.chanel_buffer_size = 0x20000
 	rf.recently_commit = make(chan struct{}, rf.chanel_buffer_size)
 	rf.internal_apply_chan = make(chan ApplyMsg, rf.chanel_buffer_size)
 	rf.append_entry_chan = make([]chan struct{}, rf.all_server_number)
