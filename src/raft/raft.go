@@ -603,7 +603,17 @@ func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *
 	}
 
 	dPrintf("Server[%d] install snapshot from [%d]", rf.me, args.LEADER_ID)
-	rf.removeLogIndexGreaterThan(0)
+
+	if args.LAST_INCLUDED_INDEX <= rf.quorom_commit_index {
+		rf.removeLogIndexLessThan(args.LAST_INCLUDED_INDEX + 1)
+		rf.last_log_term_in_snapshot = args.LAST_INCLUDED_TERM
+		rf.last_log_index_in_snapshot = args.LAST_INCLUDED_INDEX
+		rf.snapshot_data = args.DATA
+		rf.persist()
+		return
+	}
+
+	rf.removeLogIndexLessThan(args.LAST_INCLUDED_INDEX + 1)
 	rf.last_log_term_in_snapshot = args.LAST_INCLUDED_TERM
 	rf.last_log_index_in_snapshot = args.LAST_INCLUDED_INDEX
 	rf.snapshot_data = args.DATA
