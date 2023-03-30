@@ -763,6 +763,10 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 	append_logs := args.ENTRIES
 	ok := false
 
+	if args.ENTRIES[0].INDEX <= rf.quorom_commit_index {
+		return
+	}
+
 	if rf.hasLog() {
 		append_logs, ok = rf.sliceLogToAlign(args)
 		if !ok {
@@ -780,10 +784,16 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 			append_logs = append_logs[:snapshot_position]
 			goto start_append_logs
 		}
-		prev_log_is_snapshot_log := args.PREV_LOG_INDEX == rf.last_log_index_in_snapshot && args.PREV_LOG_TERM == rf.last_log_term_in_snapshot
+		prev_log_is_snapshot_log := args.PREV_LOG_INDEX == rf.last_log_index_in_snapshot &&
+			args.PREV_LOG_TERM == rf.last_log_term_in_snapshot
 		is_first_log := args.PREV_LOG_INDEX == 0 && args.PREV_LOG_TERM == 0
-		if !is_first_log && !prev_log_is_snapshot_log {
-			dPrintf("Server[%v] append empty failed", rf.me)
+		allow := is_first_log || prev_log_is_snapshot_log
+		if !allow {
+			dPrintf("Server[%v] append empty failed, %v, %v, %v, %v",
+				rf.me, args.PREV_LOG_INDEX,
+				rf.last_log_index_in_snapshot,
+				args.PREV_LOG_TERM,
+				rf.last_log_term_in_snapshot)
 			rf.buildReplyForAppendEntryFailed(args, reply)
 			return
 		}
