@@ -1560,10 +1560,6 @@ func (rf *Raft) becomePreCandidate() {
 }
 
 func (rf *Raft) becomeCandidate(new_term int) {
-	if new_term <= rf.current_term {
-		dPrintf("Server[%d] Error: becomeCandidate in to older term", rf.me)
-		return
-	}
 	// NOTE: always update term first, then update voted for
 	rf.setTerm(new_term)
 	rf.setVotefor(None)
