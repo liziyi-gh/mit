@@ -742,13 +742,13 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 	dPrintf("Server[%v] got append log args %v:", rf.me, args)
 
 	append_logs := args.ENTRIES
-	ok := false
 
 	if args.ENTRIES[0].INDEX <= rf.quorom_commit_index {
 		return
 	}
 
 	if rf.hasLog() {
+		ok := false
 		append_logs, ok = rf.sliceLogToAlign(args)
 		if !ok {
 			rf.buildReplyForAppendEntryFailed(args, reply)
@@ -758,7 +758,7 @@ func (rf *Raft) tryAppendEntry(args *RequestAppendEntryArgs, reply *RequestAppen
 	}
 
 	// if have no log
-	if len(append_logs) > 0 && !rf.hasLog() {
+	if !rf.hasLog() {
 		has_snapshot_log, snapshot_position := rf.hasSnapshotLog(append_logs)
 		if has_snapshot_log {
 			rf.removeLogIndexGreaterThan(rf.last_log_index_in_snapshot)
@@ -1000,14 +1000,13 @@ func (rf *Raft) requestOneServerVote(index int, ans chan *RequestVoteReply, this
 		}
 	}
 
-	go send_func()
-
 	for timeout_times := 0; timeout_times < max_timeout_times && !rf.killed(); timeout_times++ {
+		go send_func()
 		select {
 		case <-done_ch:
 			return
 		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
-			go send_func()
+			continue
 		}
 	}
 }
@@ -1054,13 +1053,13 @@ func (rf *Raft) requestOneServerPreVote(index int, ans chan *RequestVoteReply, t
 		}
 	}
 
-	go send_func()
 	for timeout_times := 0; timeout_times < max_timeout_times && !rf.killed(); timeout_times++ {
+		go send_func()
 		select {
 		case <-done_ch:
 			return
 		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
-			go send_func()
+			continue
 		}
 	}
 }
@@ -1232,7 +1231,7 @@ func (rf *Raft) successAppend(server int, this_round_term int,
 	}
 	new_next_index := newest_index_in_args + 1
 	if new_next_index > rf.next_index[server] {
-		dPrintf("leader update next index for Server[%v], new next index is %v", server, new_next_index)
+		dPrintf("leader update next index for Server[%v] to %v", server, new_next_index)
 		rf.next_index[server] = new_next_index
 	}
 
@@ -1569,15 +1568,12 @@ func (rf *Raft) becomeFollower(new_term int, new_leader int) {
 		return
 	}
 	if rf.status != FOLLOWER {
+		rf.status = FOLLOWER
 		dPrintf("Server[%d] become follower, new leader is %d, new term is %d", rf.me, new_leader, new_term)
 	}
-	rf.status = FOLLOWER
 
-	prev_term := rf.current_term
-
-	rf.setTerm(new_term)
-
-	if prev_term < new_term {
+	if rf.current_term < new_term {
+		rf.setTerm(new_term)
 		rf.setVotefor(None)
 	}
 
