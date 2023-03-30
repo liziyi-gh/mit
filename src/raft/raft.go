@@ -582,31 +582,12 @@ func (rf *Raft) sendCommandToApplierFunction() {
 	}
 }
 
-// TODO: should refactor this, mix heartbeat and append log
-func (rf *Raft) sendOneRoundHeartBeat() {
-	args := make([]RequestAppendEntryArgs, rf.all_server_number)
-	reply := make([]RequestAppendEntryReply, rf.all_server_number)
-
-	for i := 0; i < rf.all_server_number; i++ {
-		// don't send heart beat to myself
-		if i == rf.me {
-			continue
-		}
-		argi := &args[i]
-		argi.TERM = rf.current_term
-		argi.LEADER_ID = rf.me
-		argi.LEADER_COMMIT = rf.quorom_commit_index
-		argi.PREV_LOG_INDEX = rf.getLatestLogIndexIncludeSnapshot()
-		argi.PREV_LOG_TERM = rf.getLatestLogTermIncludeSnapshot()
-		go rf.sendOneAppendEntry(i, argi, &reply[i])
-	}
-}
-
 func (rf *Raft) RequestInstallSnapshot(args *RequestInstallSnapshotArgs, reply *RequestInstallSnapshotReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	dPrintf("Server[%d] got install snapshot request from [%d], last log index is %d", rf.me, args.LEADER_ID, args.LAST_INCLUDED_INDEX)
+	dPrintf("Server[%d] got install snapshot request from [%d], last log index is %d, last log term is %v",
+		rf.me, args.LEADER_ID, args.LAST_INCLUDED_INDEX, args.LAST_INCLUDED_TERM)
 
 	reply.TERM = rf.current_term
 	if rf.current_term > args.TERM {
@@ -1613,9 +1594,7 @@ func (rf *Raft) becomeLeader() {
 	rf.status = LEADER
 	rf.next_index[rf.me] = rf.getLatestLogIndexIncludeSnapshot() + 1
 
-	// NOTE: send heartbeat ASAP
 	// TODO: commit a no-op log to promise know commit index
-	rf.sendOneRoundHeartBeat()
 	go rf.leaderUpdateCommitIndex(rf.current_term)
 
 	for i := 0; i < rf.all_server_number; i++ {
@@ -1625,6 +1604,8 @@ func (rf *Raft) becomeLeader() {
 		rf.next_index[i] = 1
 		go rf.handleAppendEntryForOneServer(i, rf.current_term)
 	}
+	// NOTE: send heartbeat ASAP
+	rf.newRoundAppend()
 
 	dPrintf("Server[%d] become LEADER at term %d", rf.me, rf.current_term)
 	return
