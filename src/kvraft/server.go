@@ -75,7 +75,6 @@ type KVServer struct {
 	data                  map[string]string
 	notifier              map[uint64](*applyNotify)
 	applyed_index         int
-	transcation_duplicate map[uint32](uint32)
 	client_apply          map[uint32](uint32)
 	raft_chan             chan raftLog
 }
@@ -98,11 +97,6 @@ func (kv *KVServer) setTransactionDone(client_id uint32, trans_id uint32) {
 		DPrintln("setting trans_id < kv.client_apply[client_id]")
 	}
 	kv.client_apply[client_id] = trans_id
-}
-
-func (kv *KVServer) setTransactionDuplicate(client_id uint32, trans_id uint32) {
-	kv.transcation_duplicate[client_id] = trans_id
-	DPrintln("Server", kv.me, "allocate", "for client", client_id, "trans id", trans_id)
 }
 
 func (kv *KVServer) sendRaftLog(raftlog raftLog) {
@@ -327,7 +321,6 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 
 	kv.applyed_index = command.CommandIndex
 	kv.setTransactionDone(op.Client_id, op.Trans_id)
-	kv.setTransactionDuplicate(op.Client_id, op.Trans_id)
 	if need_notify {
 		close(notify.ch)
 	}
@@ -353,12 +346,10 @@ func (kv *KVServer) readSnapshot(snapshot_data []byte) {
 	d := labgob.NewDecoder(r)
 	m := make(map[string]string)
 	apply_index := 0
-	transcation_duplicate := make(map[uint32](uint32))
 	client_apply := make(map[uint32](uint32))
 
 	ok := d.Decode(&m) == nil &&
 		d.Decode(&apply_index) == nil &&
-		d.Decode(&transcation_duplicate) == nil &&
 		d.Decode(&client_apply) == nil
 	if !ok {
 		DPrintf("Server[%v] read snapshot error", kv.me)
@@ -367,7 +358,6 @@ func (kv *KVServer) readSnapshot(snapshot_data []byte) {
 
 	kv.data = m
 	kv.applyed_index = apply_index
-	kv.transcation_duplicate = transcation_duplicate
 	kv.client_apply = client_apply
 	DPrintf("Server[%v] read snapshot success", kv.me)
 }
@@ -378,7 +368,6 @@ func (kv *KVServer) createSnapshot() {
 	e := labgob.NewEncoder(w)
 	e.Encode(kv.data)
 	e.Encode(kv.applyed_index)
-	e.Encode(kv.transcation_duplicate)
 	e.Encode(kv.client_apply)
 	data := w.Bytes()
 	kv.rf.Snapshot(kv.applyed_index, data)
@@ -455,7 +444,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.data = make(map[string]string)
 	kv.notifier = make(map[uint64](*applyNotify))
 	kv.persister = persister
-	kv.transcation_duplicate = make(map[uint32](uint32))
 	kv.client_apply = make(map[uint32](uint32))
 	kv.raft_chan = make(chan raftLog, kv.chanel_buffer)
 	snapshot_data := persister.ReadSnapshot()
