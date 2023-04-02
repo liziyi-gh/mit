@@ -14,11 +14,6 @@ import (
 
 const Debug = true
 
-func (kv *KVServer) setNotifier(request_id uint64, notify *applyNotify) {
-	kv.notifier[request_id] = notify
-	DPrintln("set_notifer_for", request_id)
-}
-
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
 		dt := time.Now()
@@ -85,6 +80,11 @@ type KVServer struct {
 	raft_chan             chan raftLog
 }
 
+func (kv *KVServer) setNotifier(request_id uint64, notify *applyNotify) {
+	kv.notifier[request_id] = notify
+	DPrintln("set_notifer_for", request_id)
+}
+
 func (kv *KVServer) calculateRequestId(client_id uint32, trans_id uint32) uint64 {
 	return uint64(client_id)<<32 + uint64(trans_id)
 }
@@ -106,12 +106,12 @@ func (kv *KVServer) setTransactionDuplicate(client_id uint32, trans_id uint32) {
 }
 
 func (kv *KVServer) sendRaftLog(raftlog raftLog) {
+	retry_ms := 1000
+	retry_times := 10
 	op := raftlog.op
 	ch := raftlog.ch
 	notify_ch := raftlog.notify_ch
 
-	retry_ms := 1000
-	retry_times := 10
 	for i := 0; i < retry_times; i++ {
 		DPrintf("Server[%v] [sendRaftLog] trying_request_id %v", kv.me, op.Request_id)
 		kv.mu.Lock()
@@ -119,11 +119,11 @@ func (kv *KVServer) sendRaftLog(raftlog raftLog) {
 		if done {
 			kv.mu.Unlock()
 			DPrintf("Server[%v] [sendRaftLog] op %v already done", kv.me, op.Request_id)
-			// FIXME: here block
 			ch <- INTERNAL_ERROR
 			return
 		}
 		kv.mu.Unlock()
+
 		DPrintln("Server", kv.me, "trying sendRaftLog client id", op.Client_id, "trans id", op.Trans_id, "request id", op.Request_id)
 		_, _, is_leader := kv.rf.Start(*op)
 		if !is_leader {
@@ -229,8 +229,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	case <-notify.ch:
 		reply.Value = notify.value
 		reply.Err = notify.err
-		DPrintln("Get receive notify for requestID", op.Request_id)
-		DPrintln("[Server] [Get] lzy: return value is", reply.Value)
+		DPrintf("[Server] [Get] %v return value is %v", op.Request_id, reply.Value)
 		return
 	}
 
@@ -338,6 +337,17 @@ func (kv *KVServer) applyCommand(command raft.ApplyMsg) {
 		op.Request_id, "raft index", command.CommandIndex)
 }
 
+func (kv *KVServer) applySnapshot(command raft.ApplyMsg) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if command.SnapshotIndex < kv.applyed_index {
+		DPrintf("Server[%v] try to apply old snapshot", kv.me)
+		return
+	}
+	DPrintf("Server[%v] applySnapshot", kv.me)
+	kv.readSnapshot(command.Snapshot)
+}
+
 func (kv *KVServer) readSnapshot(snapshot_data []byte) {
 	r := bytes.NewBuffer(snapshot_data)
 	d := labgob.NewDecoder(r)
@@ -350,24 +360,30 @@ func (kv *KVServer) readSnapshot(snapshot_data []byte) {
 		d.Decode(&apply_index) == nil &&
 		d.Decode(&transcation_duplicate) == nil &&
 		d.Decode(&client_apply) == nil
-	if ok {
-		kv.data = m
-		kv.applyed_index = apply_index
-		kv.transcation_duplicate = transcation_duplicate
-		kv.client_apply = client_apply
-		DPrintf("Server[%v] read snapshot success", kv.me)
-	}
-}
-
-func (kv *KVServer) applySnapshot(command raft.ApplyMsg) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	if command.SnapshotIndex < kv.applyed_index {
-		DPrintf("Server[%v] try to apply old snapshot", kv.me)
+	if !ok {
+		DPrintf("Server[%v] read snapshot error", kv.me)
 		return
 	}
-	DPrintf("Server[%v] applySnapshot", kv.me)
-	kv.readSnapshot(command.Snapshot)
+
+	kv.data = m
+	kv.applyed_index = apply_index
+	kv.transcation_duplicate = transcation_duplicate
+	kv.client_apply = client_apply
+	DPrintf("Server[%v] read snapshot success", kv.me)
+}
+
+func (kv *KVServer) createSnapshot() {
+	kv.mu.Lock()
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.data)
+	e.Encode(kv.applyed_index)
+	e.Encode(kv.transcation_duplicate)
+	e.Encode(kv.client_apply)
+	data := w.Bytes()
+	kv.rf.Snapshot(kv.applyed_index, data)
+	kv.mu.Unlock()
+	DPrintf("Server[%d] [applier] create snapshot, idx is %v", kv.me, kv.applyed_index)
 }
 
 func (kv *KVServer) applier() {
@@ -386,17 +402,7 @@ func (kv *KVServer) applier() {
 		}
 
 		if kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate {
-			kv.mu.Lock()
-			w := new(bytes.Buffer)
-			e := labgob.NewEncoder(w)
-			e.Encode(kv.data)
-			e.Encode(kv.applyed_index)
-			e.Encode(kv.transcation_duplicate)
-			e.Encode(kv.client_apply)
-			data := w.Bytes()
-			kv.rf.Snapshot(kv.applyed_index, data)
-			kv.mu.Unlock()
-			DPrintf("Server[%d] [applier] create snapshot, idx is %v", kv.me, kv.applyed_index)
+			kv.createSnapshot()
 		}
 	}
 }
@@ -445,7 +451,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-	kv.chanel_buffer = 10000
+	kv.chanel_buffer = 0x20000
 	kv.data = make(map[string]string)
 	kv.notifier = make(map[uint64](*applyNotify))
 	kv.persister = persister
